@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { normalizeRoomCode, roomCodeProblem, ROLES, MODES } from '../shared/constants.js';
+import { createLogger } from './logger.js';
 import { RateLimiter } from './rateLimit.js';
 import { RoomManager } from './rooms.js';
 import { createStaticHandler, securityHeaders } from './static.js';
@@ -12,13 +13,24 @@ const MAX_BODY = 2_048;
 const MAX_WS_PER_IP = 12;
 const HELLO_TIMEOUT_MS = 10_000;
 const HEARTBEAT_MS = 25_000;
+/** Time for "the server is restarting" messages to reach players before sockets close. */
+const SHUTDOWN_FLUSH_MS = 750;
+/** After this, remaining HTTP connections are cut so shutdown always finishes. */
+const SHUTDOWN_FORCE_MS = 5_000;
+const RESTARTING = {
+  error: 'SERVER_RESTARTING',
+  message: 'The game server is restarting. Wait a minute, then try again.',
+};
 
 /**
  * Builds the HTTP + WebSocket server without listening, so tests can run it on
  * an ephemeral port.
  */
-export function createApp(config, { narrator = null, log = console } = {}) {
-  const rooms = new RoomManager({ idleMs: config.roomIdleMs, maxMs: config.roomMaxMs, narrator });
+export function createApp(config, { narrator = null, log = createLogger('info') } = {}) {
+  const startedAt = Date.now();
+  let draining = false;
+  let shutdownPromise = null;
+  const rooms = new RoomManager({ idleMs: config.roomIdleMs, maxMs: config.roomMaxMs, narrator, log });
   const serveStatic = createStaticHandler({
     '/shared/': path.join(ROOT, 'shared'),
     '/': path.join(ROOT, 'public'),
@@ -41,6 +53,12 @@ export function createApp(config, { narrator = null, log = console } = {}) {
       if (fwd.length) return fwd[fwd.length - 1];
     }
     return req.socket.remoteAddress || 'unknown';
+  }
+
+  function isHttps(req) {
+    if (req.socket.encrypted) return true;
+    if (!config.trustProxy) return false;
+    return String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
   }
 
   function sendJson(req, res, status, body, extra = {}) {
@@ -103,6 +121,11 @@ export function createApp(config, { narrator = null, log = console } = {}) {
     const ip = clientIp(req);
     const parts = url.pathname.split('/').filter(Boolean); // ['api', 'rooms', code?, 'join'?]
 
+    // While shutting down, refuse new rooms and joins: they would vanish seconds later.
+    if (draining && req.method !== 'GET') {
+      return sendJson(req, res, 503, RESTARTING, { 'Retry-After': '30' });
+    }
+
     if (parts.length === 2 && parts[1] === 'rooms' && req.method === 'POST') {
       const wait = limits.create.take(ip);
       if (wait) return tooMany(req, res, wait);
@@ -148,6 +171,13 @@ export function createApp(config, { narrator = null, log = console } = {}) {
     return sendJson(req, res, 404, { error: 'NOT_FOUND', message: 'Unknown endpoint.' });
   }
 
+  /** Liveness and readiness for the host's load balancer. 503 while draining. */
+  function health() {
+    if (draining) return [503, { status: 'draining' }];
+    const { rooms: roomCount, players } = rooms.stats();
+    return [200, { status: 'ok', uptimeSeconds: Math.round((Date.now() - startedAt) / 1000), rooms: roomCount, players }];
+  }
+
   const server = http.createServer(async (req, res) => {
     let url;
     try {
@@ -156,20 +186,25 @@ export function createApp(config, { narrator = null, log = console } = {}) {
       res.writeHead(400).end();
       return;
     }
+    req.isHttps = isHttps(req);
     try {
-      if (url.pathname === '/healthz') {
-        return sendJson(req, res, 200, { ok: true, rooms: rooms.rooms.size });
+      if (url.pathname === '/healthz' && (req.method === 'GET' || req.method === 'HEAD')) {
+        const [status, body] = health();
+        return sendJson(req, res, status, body);
       }
       if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
       if (await serveStatic(req, res, url.pathname)) return;
       res.writeHead(404, { ...securityHeaders(req), 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('Not found');
     } catch (err) {
-      log.error('[http]', err);
-      if (!res.headersSent) sendJson(req, res, 500, { error: 'SERVER_ERROR', message: 'Something went wrong on the server.' });
+      log.error('request failed', { method: req.method, path: url.pathname, err });
+      if (!res.headersSent) sendJson(req, res, 500, { error: 'SERVER_ERROR', message: 'Something went wrong on the game server. Try again.' });
       else res.end();
     }
   });
+  // Outlive typical load-balancer idle timeouts so they never reuse a closed connection.
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
 
   // ---- WebSocket ----------------------------------------------------------------
 
@@ -200,6 +235,7 @@ export function createApp(config, { narrator = null, log = console } = {}) {
       return reject(400, 'Bad Request');
     }
     if (pathname !== '/ws') return reject(404, 'Not Found');
+    if (draining) return reject(503, 'Service Unavailable');
     if (!originAllowed(req)) return reject(403, 'Forbidden');
     const ip = clientIp(req);
     if (limits.connect.take(ip)) return reject(429, 'Too Many Requests');
@@ -271,7 +307,7 @@ export function createApp(config, { narrator = null, log = console } = {}) {
       try {
         rooms.handle(room, seat, msg);
       } catch (err) {
-        log.error('[ws]', err);
+        log.error('message handling failed', { type: msg.t, room: room.code, err });
         rooms.notice(room, seat, 'SERVER_ERROR', 'Something went wrong on the server. Try that again.');
       }
     });
@@ -306,14 +342,34 @@ export function createApp(config, { narrator = null, log = console } = {}) {
   sweeper.unref();
   pruner.unref();
 
-  function close() {
-    clearInterval(heartbeat);
-    clearInterval(sweeper);
-    clearInterval(pruner);
-    rooms.shutdown();
-    for (const ws of wss.clients) ws.terminate();
-    return new Promise((resolve) => server.close(() => resolve()));
+  /**
+   * Graceful shutdown: stop taking new rooms and connections, tell every player
+   * the server is restarting (rooms live in memory and cannot survive), give
+   * those messages a moment to arrive, then close everything.
+   */
+  function shutdown({ flushMs = SHUTDOWN_FLUSH_MS } = {}) {
+    if (shutdownPromise) return shutdownPromise;
+    draining = true;
+    shutdownPromise = (async () => {
+      clearInterval(heartbeat);
+      clearInterval(sweeper);
+      clearInterval(pruner);
+      rooms.shutdown();
+      if (flushMs > 0) await new Promise((resolve) => setTimeout(resolve, flushMs));
+      for (const ws of wss.clients) ws.terminate();
+      await new Promise((resolve) => {
+        if (!server.listening) return resolve();
+        const force = setTimeout(() => server.closeAllConnections?.(), SHUTDOWN_FORCE_MS);
+        force.unref();
+        server.close(() => {
+          clearTimeout(force);
+          resolve();
+        });
+        server.closeIdleConnections?.();
+      });
+    })();
+    return shutdownPromise;
   }
 
-  return { server, rooms, close };
+  return { server, rooms, shutdown, close: () => shutdown({ flushMs: 0 }), isDraining: () => draining };
 }

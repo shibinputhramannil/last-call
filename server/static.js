@@ -29,7 +29,7 @@ export function securityHeaders(req) {
     "form-action 'self'",
     "frame-ancestors 'none'",
   ].join('; ');
-  return {
+  const headers = {
     'Content-Security-Policy': csp,
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
@@ -38,6 +38,9 @@ export function securityHeaders(req) {
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
     'Cross-Origin-Opener-Policy': 'same-origin',
   };
+  // Only over real HTTPS (see app.js isHttps), so local http://localhost keeps working.
+  if (req.isHttps) headers['Strict-Transport-Security'] = 'max-age=15552000';
+  return headers;
 }
 
 /**

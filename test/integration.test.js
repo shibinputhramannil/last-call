@@ -2,6 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import WebSocket from 'ws';
 import { createApp } from '../server/app.js';
+import { silentLogger } from '../server/logger.js';
 
 const config = {
   trustProxy: false,
@@ -13,7 +14,7 @@ let app;
 let base;
 
 before(async () => {
-  app = createApp(config, { log: { error() {}, warn() {} } });
+  app = createApp(config, { log: silentLogger });
   await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${app.server.address().port}`;
 });

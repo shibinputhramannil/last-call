@@ -1,6 +1,9 @@
 // HTTP calls for rooms, and a WebSocket connection that reconnects by itself.
 
-const OFFLINE_MESSAGE = 'Could not reach the exchange. Check your connection and try again.';
+const OFFLINE_MESSAGE = 'You appear to be offline. Check your internet connection, then try again.';
+const UNREACHABLE_MESSAGE =
+  'Could not reach the game server. It may be restarting or waking up, which can take about a minute. Try again shortly.';
+const UNAVAILABLE_MESSAGE = 'The game server is restarting or unavailable. Wait a minute, then try again.';
 
 async function request(path, options = {}) {
   let res;
@@ -10,20 +13,22 @@ async function request(path, options = {}) {
       headers: { 'content-type': 'application/json', ...(options.headers || {}) },
     });
   } catch {
-    return { ok: false, status: 0, error: 'OFFLINE', message: OFFLINE_MESSAGE };
+    const offline = navigator.onLine === false;
+    return { ok: false, status: 0, error: offline ? 'OFFLINE' : 'UNREACHABLE', message: offline ? OFFLINE_MESSAGE : UNREACHABLE_MESSAGE };
   }
   let body = {};
   try {
     body = await res.json();
   } catch {
-    body = {};
+    body = {}; // e.g. a proxy's HTML error page while the server is down
   }
   if (!res.ok) {
+    const unavailable = res.status === 502 || res.status === 503 || res.status === 504;
     return {
       ok: false,
       status: res.status,
-      error: body.error || 'SERVER_ERROR',
-      message: body.message || 'The exchange returned an error. Try again in a moment.',
+      error: body.error || (unavailable ? 'UNAVAILABLE' : 'SERVER_ERROR'),
+      message: body.message || (unavailable ? UNAVAILABLE_MESSAGE : 'Something went wrong on the game server. Try again in a moment.'),
     };
   }
   return { ok: true, status: res.status, data: body };
@@ -130,7 +135,8 @@ export class Connection extends EventTarget {
     this.attempt++;
     const base = Math.min(10_000, 500 * 2 ** Math.min(this.attempt - 1, 5));
     const delay = base / 2 + Math.random() * (base / 2);
-    this.setState('reconnecting', { retryInMs: delay, offline: navigator.onLine === false });
+    this.retryAt = Date.now() + delay;
+    this.setState('reconnecting', { retryAt: this.retryAt, offline: navigator.onLine === false });
     clearTimeout(this.retryTimer);
     this.retryTimer = setTimeout(() => this.connect(), delay);
   }

@@ -74,6 +74,16 @@
       </header>
 
       <main id="main" tabindex="-1">
+        <!-- Shown during a longer connection outage while in a room -->
+        <div class="conn-banner" id="conn-banner" hidden>
+          <span class="lamp-dot is-lost" aria-hidden="true"></span>
+          <p class="conn-banner-text">
+            <strong id="conn-banner-title">Can’t reach the game server</strong>
+            <span id="conn-banner-detail"></span>
+          </p>
+          <button class="btn" id="conn-retry" type="button">Try now</button>
+        </div>
+
         <!-- Menu -->
         <section id="screen-menu" class="screen menu" aria-labelledby="menu-title" hidden>
           <h1 id="menu-title" class="menu-title title-plate small"><span>Last</span> <span>Call</span></h1>

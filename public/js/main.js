@@ -411,6 +411,7 @@ function enterRoom(code, token) {
 function leaveConnection() {
   if (app.conn) app.conn.stop();
   app.conn = null;
+  hideConnBanner();
   if (app.controller) app.controller.destroy();
   app.controller = null;
   clearTimeout(app.holdTimer);
@@ -449,6 +450,7 @@ function onConnStatus(detail, connectingTimer) {
 
   if (detail.state === 'open') {
     clearTimeout(connectingTimer);
+    hideConnBanner();
     chat.setConnected(true);
     renderStatus();
     return;
@@ -459,24 +461,57 @@ function onConnStatus(detail, connectingTimer) {
     text.textContent = 'Connecting…';
   } else if (detail.state === 'reconnecting') {
     pill.classList.add('is-lost');
-    text.textContent = detail.offline ? 'You are offline' : 'Reconnecting…';
+    app.offline = Boolean(detail.offline);
     if (app.welcomed && wasOpen) {
       toast('Connection lost. Reconnecting… Your seat is kept for you.', 'error');
       announce('Connection lost. Reconnecting.');
     }
-    if (!app.welcomed && detail.attempt >= 3) {
+    // A blip is handled quietly; a real outage gets a banner that explains it.
+    if (app.welcomed && detail.attempt >= 2) showConnBanner();
+    if (!app.welcomed && detail.attempt >= 3 && $('#overlay-title').textContent !== UNREACHABLE_TITLE) {
       showOverlay({
-        title: 'Still connecting',
+        title: UNREACHABLE_TITLE,
         body: detail.offline
-          ? 'You appear to be offline. The game will connect when your network is back.'
-          : 'The exchange is not answering yet. It will keep trying.',
-        actions: [{ label: 'Back to start', onClick: () => leaveRoom({ local: true }) }],
+          ? 'You appear to be offline. Last Call will connect as soon as your internet is back.'
+          : 'The game server is not answering. It may be restarting or waking up, which can take about a minute. Last Call keeps trying every few seconds.',
+        actions: [
+          { label: 'Back to start', onClick: () => leaveRoom({ local: true }) },
+          { label: 'Try now', primary: true, onClick: () => app.conn?.reconnectNow() },
+        ],
       });
     }
+    tickConnection();
   } else if (detail.state === 'closed') {
     clearTimeout(connectingTimer);
+    hideConnBanner();
     onClosed(detail.code, detail.message);
   }
+}
+
+const UNREACHABLE_TITLE = 'Can’t reach the game server';
+
+function showConnBanner() {
+  const banner = $('#conn-banner');
+  if (!banner.hidden) return;
+  banner.hidden = false;
+  announce(app.offline ? 'You are offline. Reconnecting when your internet is back.' : 'Cannot reach the game server. Retrying.');
+}
+
+function hideConnBanner() {
+  $('#conn-banner').hidden = true;
+}
+
+/** Keeps the status pill and the outage banner's countdown current. */
+function tickConnection() {
+  const conn = app.conn;
+  if (!conn || conn.state === 'open' || conn.state === 'closed') return;
+  const seconds = Math.ceil(((conn.retryAt || 0) - Date.now()) / 1000);
+  const when = seconds > 0 ? `in ${seconds} s` : 'now';
+  $('#conn-status .status-text').textContent = app.offline ? 'You are offline' : `Reconnecting ${when}…`;
+  $('#conn-banner-title').textContent = app.offline ? 'You are offline' : UNREACHABLE_TITLE;
+  $('#conn-banner-detail').textContent = app.offline
+    ? 'Last Call will reconnect as soon as your internet is back. Your seat is saved.'
+    : `Trying again ${when}. Your seat is saved. If the server restarted, you will be taken back to the start to open a new room.`;
 }
 
 function onClosed(code, message) {
@@ -559,7 +594,7 @@ function onMessage(msg) {
 
 function hideOverlayIfConnecting() {
   const title = $('#overlay-title').textContent;
-  if (title === 'Connecting' || title === 'Still connecting') hideOverlay();
+  if (title === 'Connecting' || title === UNREACHABLE_TITLE) hideOverlay();
 }
 
 // ---- State --------------------------------------------------------------------
@@ -971,6 +1006,8 @@ function boot() {
   setupMenu();
   setupRoomControls();
   setInterval(tickTimer, 250);
+  setInterval(tickConnection, 500);
+  $('#conn-retry').addEventListener('click', () => app.conn?.reconnectNow());
 
   const raw = new URLSearchParams(location.search).get('room');
   if (raw) {

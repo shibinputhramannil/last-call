@@ -1,5 +1,6 @@
 import { MAX_CHAT_LENGTH, MAX_NAME_LENGTH, MODES, ROLES } from '../shared/constants.js';
 import { Game } from './game.js';
+import { silentLogger } from './logger.js';
 import { newRoomCode, newSeatToken, tokensMatch } from './random.js';
 import { RateLimiter } from './rateLimit.js';
 
@@ -40,7 +41,8 @@ const CLOSE_MESSAGES = {
     `This room closed after ${Math.round(cfg.idleMs / 60_000)} minutes with nobody on the line. Open a new room to play again.`,
   MAX_AGE: (cfg) => `This room reached its ${Math.round(cfg.maxMs / 3_600_000)}-hour limit and closed. Open a new room to play again.`,
   EMPTY: () => 'Both players left, so this room closed. Open a new room to play again.',
-  SHUTDOWN: () => 'The server is restarting. Open a new room in a minute or two.',
+  SHUTDOWN: () =>
+    'The game server is restarting, usually for an update, so this room has closed. Wait a minute, then open a new room and send your partner the new link.',
 };
 
 class Seat {
@@ -139,10 +141,11 @@ export class Room {
 }
 
 export class RoomManager {
-  constructor({ idleMs, maxMs, maxRooms = 5_000, narrator = null, now = () => Date.now() }) {
+  constructor({ idleMs, maxMs, maxRooms = 5_000, narrator = null, log = silentLogger, now = () => Date.now() }) {
     this.cfg = { idleMs, maxMs };
     this.maxRooms = maxRooms;
     this.narrator = narrator;
+    this.log = log;
     this.now = now;
     this.rooms = new Map();
     this.tombstones = new Map();
@@ -164,7 +167,15 @@ export class RoomManager {
     const seat = new Seat(role, cleanName(name), now);
     room.seats[role] = seat;
     this.rooms.set(code, room);
+    this.log.info('room opened', { room: code, mode, rooms: this.rooms.size });
     return { room, seat };
+  }
+
+  /** Counts for the health check. */
+  stats() {
+    let players = 0;
+    for (const room of this.rooms.values()) players += room.seatList.filter((s) => s.connected).length;
+    return { rooms: this.rooms.size, players };
   }
 
   lookup(code) {
@@ -289,6 +300,7 @@ export class RoomManager {
     }
     this.rooms.delete(room.code);
     this.tombstones.set(room.code, { reason, at: this.now() });
+    this.log.info('room closed', { room: room.code, reason: reason.toLowerCase(), rooms: this.rooms.size });
     if (this.tombstones.size > MAX_TOMBSTONES) {
       const oldest = this.tombstones.keys().next().value;
       this.tombstones.delete(oldest);

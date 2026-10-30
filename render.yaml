@@ -1,0 +1,30 @@
+# Render Blueprint for Last Call.
+# One web service serves the game page, the room API and the WebSocket from a
+# single Node process. Set up: Render Dashboard > New > Blueprint > this repo.
+#
+# Keep this service at ONE instance and do not turn on autoscaling: rooms live
+# in server memory, so a second instance would not see the first one's rooms.
+services:
+  - type: web
+    name: last-call
+    runtime: node
+    # Free instances sleep after 15 minutes without players and take about a
+    # minute to wake. Change to "starter" (paid) for an always-on server.
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    # Deploy each push to the branch, but only after the GitHub CI checks pass.
+    autoDeployTrigger: checksPass
+    envVars:
+      # Render's proxy sets X-Forwarded-For; needed for per-player rate limits.
+      - key: TRUST_PROXY
+        value: "1"
+      - key: LOG_LEVEL
+        value: info
+      # Optional Claude narrator. Leave off unless you add an API key below.
+      - key: ENABLE_AI_NARRATOR
+        value: "false"
+      # Secret: Render asks for it when the Blueprint is created; leave blank to skip.
+      - key: ANTHROPIC_API_KEY
+        sync: false

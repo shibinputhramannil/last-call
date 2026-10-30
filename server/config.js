@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { LOG_LEVELS } from './logger.js';
 
 // Load a local .env during development. Hosting platforms set real env vars.
 if (existsSync('.env') && typeof process.loadEnvFile === 'function') {
@@ -21,8 +22,16 @@ function bool(name, fallback = false) {
   return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
 }
 
+function oneOf(name, options, fallback) {
+  const raw = (process.env[name] || '').trim().toLowerCase();
+  if (!raw) return fallback;
+  if (!options.includes(raw)) throw new Error(`${name} must be one of ${options.join(', ')} (got "${raw}")`);
+  return raw;
+}
+
 export function loadConfig() {
   return {
+    logLevel: oneOf('LOG_LEVEL', LOG_LEVELS, 'info'),
     port: int('PORT', 3000, { min: 0, max: 65535 }),
     host: process.env.HOST || '0.0.0.0',
     trustProxy: bool('TRUST_PROXY'),
@@ -35,7 +44,7 @@ export function loadConfig() {
     narrator: {
       enabled: bool('ENABLE_AI_NARRATOR') && Boolean(process.env.ANTHROPIC_API_KEY),
       apiKey: process.env.ANTHROPIC_API_KEY || '',
-      model: process.env.ANTHROPIC_MODEL || 'claude-haiku-5-5',
+      model: process.env.ANTHROPIC_MODEL || 'claude-opus-5-5',
     },
   };
 }
