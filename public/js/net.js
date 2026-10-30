@@ -44,7 +44,8 @@ export const api = {
 const TERMINAL = new Set(['ROOM_CLOSED', 'ROOM_NOT_FOUND', 'SEAT_LOST', 'REPLACED', 'LEFT']);
 
 const PING_EVERY_MS = 15_000;
-const SILENCE_LIMIT_MS = 40_000;
+/** A ping with no reply this long after it was sent means the connection is dead. */
+const PING_REPLY_MS = 10_000;
 
 export class Connection extends EventTarget {
   constructor(code, token) {
@@ -150,14 +151,27 @@ export class Connection extends EventTarget {
 
   startPing() {
     this.stopPing();
+    this.pingSentAt = 0;
     this.pingTimer = setInterval(() => {
-      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-      if (Date.now() - this.lastHeard > SILENCE_LIMIT_MS) {
-        // The socket looks open but nothing is arriving (common after sleep or a network switch).
-        this.ws.close();
+      const ws = this.ws;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      // Only judge a ping we actually sent. Background tabs may run this timer
+      // just once a minute, so "nothing heard lately" alone would be a false alarm.
+      if (this.pingSentAt && this.lastHeard < this.pingSentAt && Date.now() - this.pingSentAt > PING_REPLY_MS) {
+        // The socket looks open but the server stopped answering (sleep, network switch).
+        // Abandon it now rather than waiting for the browser to notice.
+        this.ws = null;
+        this.stopPing();
+        try {
+          ws.close();
+        } catch {
+          // already closing
+        }
+        this.scheduleReconnect();
         return;
       }
-      this.ws.send(JSON.stringify({ t: 'ping' }));
+      this.pingSentAt = Date.now();
+      ws.send(JSON.stringify({ t: 'ping' }));
     }, PING_EVERY_MS);
   }
 

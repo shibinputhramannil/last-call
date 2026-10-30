@@ -17,9 +17,13 @@ services:
     # Deploy each push to the branch, but only after the GitHub CI checks pass.
     autoDeployTrigger: checksPass
     envVars:
-      # Render's proxy sets X-Forwarded-For; needed for per-player rate limits.
+      # Render sits behind Cloudflare. Its X-Forwarded-For ends in a rotating
+      # proxy address, so per-player rate limits use Cloudflare's
+      # CF-Connecting-IP header, which always holds the real client IP.
       - key: TRUST_PROXY
         value: "1"
+      - key: CLIENT_IP_HEADER
+        value: cf-connecting-ip
       - key: LOG_LEVEL
         value: info
       # Optional Claude narrator. Leave off unless you add an API key below.

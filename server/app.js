@@ -13,6 +13,13 @@ const MAX_BODY = 2_048;
 const MAX_WS_PER_IP = 12;
 const HELLO_TIMEOUT_MS = 10_000;
 const HEARTBEAT_MS = 25_000;
+/**
+ * Players' browsers send an app-level ping every 15 s (about once a minute in
+ * throttled background tabs). Some proxies, including Render's, answer
+ * WebSocket pings themselves, so silence is the only reliable sign that a
+ * player is gone.
+ */
+const SILENCE_LIMIT_MS = 90_000;
 /** Time for "the server is restarting" messages to reach players before sockets close. */
 const SHUTDOWN_FLUSH_MS = 750;
 /** After this, remaining HTTP connections are cut so shutdown always finishes. */
@@ -26,7 +33,10 @@ const RESTARTING = {
  * Builds the HTTP + WebSocket server without listening, so tests can run it on
  * an ephemeral port.
  */
-export function createApp(config, { narrator = null, log = createLogger('info') } = {}) {
+export function createApp(
+  config,
+  { narrator = null, log = createLogger('info'), heartbeatMs = HEARTBEAT_MS, silenceLimitMs = SILENCE_LIMIT_MS } = {},
+) {
   const startedAt = Date.now();
   let draining = false;
   let shutdownPromise = null;
@@ -44,6 +54,12 @@ export function createApp(config, { narrator = null, log = createLogger('info') 
   const socketsPerIp = new Map();
 
   function clientIp(req) {
+    if (config.trustProxy && config.clientIpHeader) {
+      // A header the proxy sets to the real client IP and clients cannot forge
+      // through it, e.g. Cloudflare's CF-Connecting-IP in front of Render.
+      const value = String(req.headers[config.clientIpHeader] || '').split(',')[0].trim();
+      if (value && value.length <= 64) return value;
+    }
     if (config.trustProxy) {
       const fwd = String(req.headers['x-forwarded-for'] || '')
         .split(',')
@@ -258,6 +274,7 @@ export function createApp(config, { narrator = null, log = createLogger('info') 
     const messageLimiter = new RateLimiter({ capacity: 40, perMs: 10_000 });
     let strikes = 0;
     ws.isAlive = true;
+    ws.lastMessageAt = Date.now();
     ws.on('pong', () => {
       ws.isAlive = true;
     });
@@ -277,6 +294,7 @@ export function createApp(config, { narrator = null, log = createLogger('info') 
 
     ws.on('message', (data, isBinary) => {
       ws.isAlive = true;
+      ws.lastMessageAt = Date.now();
       if (isBinary) return;
       if (messageLimiter.take('m')) {
         if (++strikes > 20) closeWith('FLOOD', 'Too many messages. Reconnecting will fix this.', 4008);
@@ -320,8 +338,10 @@ export function createApp(config, { narrator = null, log = createLogger('info') 
   }
 
   const heartbeat = setInterval(() => {
+    const now = Date.now();
     for (const ws of wss.clients) {
-      if (!ws.isAlive) {
+      // Dead if it ignored our last protocol ping, or has gone quiet at the app level.
+      if (!ws.isAlive || now - ws.lastMessageAt > silenceLimitMs) {
         ws.terminate();
         continue;
       }
@@ -332,7 +352,7 @@ export function createApp(config, { narrator = null, log = createLogger('info') 
         // ignore
       }
     }
-  }, HEARTBEAT_MS);
+  }, heartbeatMs);
 
   const sweeper = setInterval(() => rooms.sweep(), 1_000);
   const pruner = setInterval(() => {

@@ -11,8 +11,8 @@ const baseConfig = {
   roomMaxMs: 4 * 3_600_000,
 };
 
-async function start(config = baseConfig) {
-  const app = createApp(config, { log: silentLogger });
+async function start(config = baseConfig, options = {}) {
+  const app = createApp(config, { log: silentLogger, ...options });
   await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
   return { app, base: `http://127.0.0.1:${app.server.address().port}` };
 }
@@ -72,6 +72,54 @@ test('graceful shutdown drains, tells players why, and closes everything', async
   await done;
   assert.equal(app.server.listening, false);
   assert.equal(app.isDraining(), true);
+});
+
+/** Joins a fresh room over WebSocket and resolves once welcomed. */
+async function joinRoom(base) {
+  const host = await (await post(base, '/api/rooms', { role: 'caller', mode: 'untimed' })).json();
+  const ws = new WebSocket(base.replace('http', 'ws') + '/ws');
+  await new Promise((resolve) => ws.once('open', resolve));
+  ws.send(JSON.stringify({ t: 'hello', code: host.code, token: host.token }));
+  await new Promise((resolve) => ws.on('message', (d) => JSON.parse(d.toString()).t === 'welcome' && resolve()));
+  return ws;
+}
+
+test('connections that go silent are dropped even if WebSocket pings are answered for them', async () => {
+  // Some proxies answer protocol pings on the client's behalf, so silence is what counts.
+  const { app, base } = await start(baseConfig, { heartbeatMs: 40, silenceLimitMs: 200 });
+  try {
+    const silent = await joinRoom(base);
+    const chatty = await joinRoom(base);
+    const pinger = setInterval(() => chatty.send(JSON.stringify({ t: 'ping' })), 50);
+    const started = Date.now();
+    await new Promise((resolve) => silent.once('close', resolve));
+    assert.ok(Date.now() - started < 1_000, 'silent socket closed promptly');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(chatty.readyState, WebSocket.OPEN, 'a client that keeps pinging stays connected');
+    clearInterval(pinger);
+    assert.equal((await (await fetch(base + '/healthz')).json()).players, 1);
+    chatty.close();
+  } finally {
+    await app.close();
+  }
+});
+
+test('rate limits use the configured client-IP header behind a trusted proxy', async () => {
+  const { app, base } = await start({ ...baseConfig, trustProxy: true, clientIpHeader: 'cf-connecting-ip' });
+  const create = (ip) =>
+    fetch(base + '/api/rooms', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip, 'x-forwarded-for': `${ip}, 10.0.0.${Math.floor(Math.random() * 250)}` },
+      body: JSON.stringify({ role: 'caller', mode: 'timed' }),
+    });
+  try {
+    // A rotating proxy address in X-Forwarded-For must not reset the limit.
+    for (let i = 0; i < 8; i++) assert.equal((await create('203.0.113.5')).status, 201);
+    assert.equal((await create('203.0.113.5')).status, 429);
+    assert.equal((await create('203.0.113.6')).status, 201, 'a different player is not affected');
+  } finally {
+    await app.close();
+  }
 });
 
 test('HSTS is only sent for HTTPS requests behind a trusted proxy', async () => {

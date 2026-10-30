@@ -22,6 +22,13 @@ function bool(name, fallback = false) {
   return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
 }
 
+function headerName(name) {
+  const raw = (process.env[name] || '').trim().toLowerCase();
+  if (!raw) return null;
+  if (!/^[a-z0-9-]{1,64}$/.test(raw)) throw new Error(`${name} must be an HTTP header name such as cf-connecting-ip (got "${raw}")`);
+  return raw;
+}
+
 function oneOf(name, options, fallback) {
   const raw = (process.env[name] || '').trim().toLowerCase();
   if (!raw) return fallback;
@@ -35,6 +42,7 @@ export function loadConfig() {
     port: int('PORT', 3000, { min: 0, max: 65535 }),
     host: process.env.HOST || '0.0.0.0',
     trustProxy: bool('TRUST_PROXY'),
+    clientIpHeader: headerName('CLIENT_IP_HEADER'),
     allowedOrigins: (process.env.ALLOWED_ORIGINS || '')
       .split(',')
       .map((s) => s.trim().replace(/\/$/, ''))

@@ -90,7 +90,7 @@ The repository is set up for **[Render](https://render.com)** through [`render.y
 | Start command | `npm start` |
 | Health check | `/healthz` |
 | Node version | `.node-version` (24) |
-| Environment | `TRUST_PROXY=1`, `LOG_LEVEL=info`, narrator off |
+| Environment | `TRUST_PROXY=1`, `CLIENT_IP_HEADER=cf-connecting-ip`, `LOG_LEVEL=info`, narrator off |
 | Auto-deploy | every push to `main`, after the GitHub CI checks pass |
 
 ### First deployment (about 5 minutes)
@@ -157,7 +157,7 @@ Any host that runs one long-lived Node process with WebSockets works.
 - **Build:** `npm ci --omit=dev`
 - **Start:** `npm start`
 - **Health check:** `/healthz`
-- **Settings:** set `TRUST_PROXY=1` behind the host's proxy, and keep it to one instance.
+- **Settings:** set `TRUST_PROXY=1` behind the host's proxy (plus `CLIENT_IP_HEADER` if the host provides a trustworthy client-IP header), and keep it to one instance.
 
 **Railway.** Deploy from the repository and set `TRUST_PROXY=1`.
 
@@ -190,6 +190,7 @@ All are optional.
 | `PORT` | `3000` | HTTP port. Render and most hosts set this for you. |
 | `HOST` | `0.0.0.0` | Bind address. |
 | `TRUST_PROXY` | `false` | Set to `1` behind a reverse proxy or a platform like Render, Railway or Fly. Rate limits then see real client IPs (the last `X-Forwarded-For` entry), and HTTPS is detected. Leave it off when nothing sits in front of the server, or clients could spoof their IP. |
+| `CLIENT_IP_HEADER` | none | With `TRUST_PROXY=1`: a header that holds the real client IP and that clients can't forge through your proxy. Use `cf-connecting-ip` on Render (which sits behind Cloudflare; `render.yaml` sets it) or `fly-client-ip` on Fly.io. Unset means the last `X-Forwarded-For` entry is used. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 | `ALLOWED_ORIGINS` | none | Extra comma-separated origins allowed to open the game's WebSocket. The page's own origin is always allowed. |
 | `ROOM_IDLE_MINUTES` | `30` | Close a room after this long with nobody connected. |
@@ -251,7 +252,12 @@ render.yaml       Render Blueprint (one web service)
 - **Taking over a seat.** If a player has been gone for more than 20 seconds, someone joining with the code can take their seat.
 - **Another tab.** Opening the same seat in a second tab moves the connection there, and the first tab says so.
 
-**Reconnection.** The client reconnects on its own, backing off from about half a second up to 10 seconds. It also reconnects straight away when the network or the tab comes back. A heartbeat in both directions detects dead connections. Chat messages sent while offline wait in a queue and are sent on reconnect. The server ignores duplicate retries.
+**Reconnection.** The client reconnects on its own, backing off from about half a second up to 10 seconds. It also reconnects straight away when the network or the tab comes back. Chat messages sent while offline wait in a queue and are sent on reconnect. The server ignores duplicate retries.
+
+**Detecting dead connections.**
+- **The browser** sends an app-level ping every 15 seconds. If a ping gets no reply within 10 seconds, it drops the connection and reconnects.
+- **The server** drops a connection after 90 seconds without any message. It doesn't rely on WebSocket ping frames alone, because some hosting proxies (including Render's) answer those themselves even after the player has gone.
+- **The 90-second limit** leaves room for background tabs, whose timers browsers may slow to once a minute.
 
 **Expiry.**
 - A room closes after `ROOM_IDLE_MINUTES` with nobody connected, and in any case after `ROOM_MAX_HOURS`.
