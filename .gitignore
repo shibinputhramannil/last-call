@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+
+# Logs and runtime output
+*.log
+npm-debug.log*
+coverage/
+test-results/
+playwright-report/
+.playwright-mcp/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
