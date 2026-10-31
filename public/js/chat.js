@@ -3,6 +3,13 @@ import { $, h, clear, formatTime } from './dom.js';
 import { loadDraft, loadPending, saveDraft, savePending } from './store.js';
 
 const ROLE_LABEL = { caller: 'Caller', operator: 'Operator' };
+/**
+ * On a phone held upright the chat is docked along the bottom, collapsed to a
+ * few lines. On a short landscape screen it is a full column beside the puzzle
+ * instead. These match the media queries in public/css/styles.css.
+ */
+const DOCKED_CHAT = '(max-width: 860px)';
+const SIDE_CHAT = '(orientation: landscape) and (max-height: 500px)';
 const ACK_TIMEOUT_MS = 6_000;
 /** Unacknowledged messages are re-sent (same id, so never duplicated) this many times before failing. */
 const AUTO_RETRIES = 2;
@@ -140,7 +147,7 @@ export class ChatPanel {
   }
 
   collapsedDock() {
-    return window.matchMedia('(max-width: 860px)').matches && !this.root.classList.contains('is-expanded');
+    return window.matchMedia(DOCKED_CHAT).matches && !window.matchMedia(SIDE_CHAT).matches && !this.root.classList.contains('is-expanded');
   }
 
   scrollToEnd(force = false) {

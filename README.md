@@ -102,7 +102,7 @@ Only fair things count. The stage clock **stops whenever either player is discon
 
 ### Settings
 
-The brass knob in the bottom-left corner opens **Settings** (on phones in a room it sits in the chat bar, so it never covers the game). It works with the keyboard: Tab through it and press Escape to close.
+The brass knob in the bottom-left corner opens **Settings** (on phones in a room it sits in the chat bar, so it never covers the game). It works with the keyboard: Tab through it and press Escape to close. On a phone held sideways, the chat moves from the bottom of the screen to a column beside the puzzle, so the puzzle keeps the screen's full height.
 
 - **Sound:** mute, overall volume, music and sound effects. Nothing plays until you first click or press a key.
 - **Motion:** match your device, reduce motion, or full motion.
@@ -447,10 +447,13 @@ The key is read from the environment on the server and is never sent to browsers
 ## Checks
 
 ```bash
-npm run lint    # ESLint over server, client and tests
-npm test        # node:test suites (below)
-npm run check   # both
+npm run lint          # ESLint over server, client and tests
+npm test              # node:test suites (below)
+npm run check         # both
+npm run test:browser  # phone layouts in a real browser (needs Chrome, Chromium or Edge)
 ```
+
+`npm run test:browser` is not part of `npm run check` or CI, because it needs a browser installed. It plays two players on a local server at common phone sizes, upright and on their side (full screen and with the address bar showing), and checks that every puzzle, chat and settings control can be reached by a finger, that typing and sending work with the on-screen keyboard taking room, and that upright phones keep the docked chat. It finds Chrome, Chromium or Edge in the usual places; set `CHROME_PATH` to choose one. Without a browser it skips.
 
 The PostgreSQL tests run when `TEST_DATABASE_URL` points at a **disposable** database (they wipe their own schemas). CI provides one. Locally, with Docker:
 
@@ -477,6 +480,7 @@ The tests cover:
 - **Statistics,** on SQLite and PostgreSQL: counts at the exact edges of each time range, repeated and retried writes stored once, and old events rolled up and expired.
 - **No private data** (room codes, tokens, names, chat or answers) reaches the admin pages, the database or public endpoints.
 - **Message validation**, the failed-seat limit, ignored forwarded-IP headers, oversized messages, security headers and `noindex`.
+- **Phone layouts:** that the chat script and the stylesheet agree on when the chat is a dock and when it is a column beside the puzzle (the layouts themselves are checked by `npm run test:browser`).
 
 There is no build step: the browser loads the files in `public/` and `shared/` as they are. GitHub Actions runs `npm run check` on every push to `main` and on pull requests ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
