@@ -71,7 +71,12 @@ test('WebSocket messages are reduced to known fields with checked types and size
     { t: 'hello', code: 'ABCDEF', token: 'abcdefghijklmnop', sid: 'short' },
   ];
   for (const m of bad) assert.equal(validateMessage(m), null, JSON.stringify(m));
-  assert.deepEqual(validateRoomBody({ name: 42, role: ['caller'], progress: 'x' }), { name: null, role: null, mode: null, progress: null });
+  assert.deepEqual(validateRoomBody({ name: 42, role: ['caller'], progress: 'x' }), { name: null, role: null, mode: null, progress: null, joinId: null });
+  // A join id is a random token from the browser, nothing else.
+  assert.equal(validateRoomBody({ joinId: 'abcdefghijklmnopqrstuv' }).joinId, 'abcdefghijklmnopqrstuv');
+  for (const joinId of ['short', 'x'.repeat(65), '<script>alert(1)</script>', 42, { a: 1 }]) {
+    assert.equal(validateRoomBody({ joinId }).joinId, null, JSON.stringify(joinId));
+  }
 });
 
 test('malformed or unknown messages from a seated player get a refusal, not a crash', async () => {

@@ -29,11 +29,33 @@
     <link rel="manifest" href="/site.webmanifest" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="/css/styles.css" />
+    <!-- Never holds up the first paint (a slow font host would leave the page blank); boot.js switches it on once loaded. -->
     <link
+      id="font-css"
       rel="stylesheet"
+      media="print"
       href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:ital,wght@0,400;0,600;0,700;1,400&family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=Lilita+One&display=swap"
     />
-    <link rel="stylesheet" href="/css/styles.css" />
+    <!-- Every module main.js needs, fetched at once rather than one import level at a time (test/integration.test.js keeps this list complete). -->
+    <link rel="modulepreload" href="/shared/art.js" />
+    <link rel="modulepreload" href="/shared/campaign.js" />
+    <link rel="modulepreload" href="/shared/constants.js" />
+    <link rel="modulepreload" href="/shared/scoring.js" />
+    <link rel="modulepreload" href="/shared/story.js" />
+    <link rel="modulepreload" href="/js/art.js" />
+    <link rel="modulepreload" href="/js/audio.js" />
+    <link rel="modulepreload" href="/js/caller.js" />
+    <link rel="modulepreload" href="/js/chat.js" />
+    <link rel="modulepreload" href="/js/dom.js" />
+    <link rel="modulepreload" href="/js/manual.js" />
+    <link rel="modulepreload" href="/js/map.js" />
+    <link rel="modulepreload" href="/js/net.js" />
+    <link rel="modulepreload" href="/js/result.js" />
+    <link rel="modulepreload" href="/js/settings.js" />
+    <link rel="modulepreload" href="/js/story.js" />
+    <link rel="modulepreload" href="/js/store.js" />
+    <script src="/js/boot.js" defer></script>
     <script type="module" src="/js/main.js"></script>
   </head>
   <body>
@@ -79,6 +101,23 @@
         </symbol>
       </defs>
     </svg>
+
+    <!-- Visible from the first paint, before any script runs, and again while joining a room.
+         The server fills in the invite's room code. -->
+    <section id="screen-connect" class="connect" aria-labelledby="connect-title">
+      <svg class="connect-mark" viewBox="0 0 640 360" aria-hidden="true" focusable="false"><use href="#wordmark-stacked" /></svg>
+      <div class="spinner-lamp connect-lamp" aria-hidden="true"></div>
+      <h1 id="connect-title" class="connect-title" tabindex="-1">{{CONNECT_TITLE}}</h1>
+      <p id="connect-detail" class="connect-detail" role="status">{{CONNECT_DETAIL}}</p>
+      <p id="connect-retry" class="connect-retry"></p>
+      <div class="connect-actions">
+        <button class="btn btn-lamp" id="connect-try" type="button" hidden>Try now</button>
+        <button class="btn" id="connect-back" type="button" hidden>Back to start</button>
+        <!-- Appears by itself after a while (CSS), so even a page whose scripts never arrived offers a way out. -->
+        <a class="btn connect-reload" id="connect-reload" href="">Reload the page</a>
+      </div>
+      <noscript><p class="noscript">Last Call needs JavaScript to connect the two players.</p></noscript>
+    </section>
 
     <!-- Opening story, page by page -->
     <section id="screen-story" class="story" aria-labelledby="story-heading" hidden>
@@ -187,6 +226,7 @@
                 </label>
               </fieldset>
 
+              <p class="form-status" aria-live="polite" hidden></p>
               <p class="form-error" role="alert" hidden></p>
               <button class="btn btn-lamp" type="submit">Open a room</button>
             </form>
@@ -210,6 +250,7 @@
                 />
               </label>
               <p class="join-status" id="join-status" aria-live="polite"></p>
+              <button class="btn-text join-recheck" id="join-recheck" type="button" hidden>Check again</button>
 
               <label class="field">
                 <span class="field-label">Your name <span class="optional">optional</span></span>
@@ -374,6 +415,5 @@
 
     <div class="toasts" id="toasts" aria-live="polite"></div>
     <div class="sr-only" id="sr-announce" aria-live="assertive"></div>
-    <noscript><p class="noscript">Last Call needs JavaScript to connect the two players.</p></noscript>
   </body>
 </html>

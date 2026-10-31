@@ -51,12 +51,16 @@ export function validateMessage(msg) {
   return (rule && rule(msg)) || null;
 }
 
-/** Room-creation and join bodies: optional name and signed progress, role and mode by name. */
+/**
+ * Room-creation and join bodies: optional name and signed progress, role and
+ * mode by name, and for joins the browser's random id for this join attempt.
+ */
 export function validateRoomBody(body) {
   return {
     name: typeof body.name === 'string' ? body.name.slice(0, 100) : null,
     role: typeof body.role === 'string' ? body.role : null,
     mode: typeof body.mode === 'string' ? body.mode : null,
     progress: str(body.progress, 12_000, SIGNED) ? body.progress : null,
+    joinId: str(body.joinId, 64, SESSION) ? body.joinId : null,
   };
 }

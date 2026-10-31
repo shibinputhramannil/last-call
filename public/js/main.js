@@ -6,7 +6,7 @@ import { ChatPanel } from './chat.js';
 import { $, $$, h, clear, announce, toast, copyText, formatClock, prefersReducedMotion } from './dom.js';
 import { renderManual } from './manual.js';
 import { createMap } from './map.js';
-import { api, Connection } from './net.js';
+import { api, Connection, isTransient, retrying } from './net.js';
 import { renderResult } from './result.js';
 import { setupSettings } from './settings.js';
 import { runOpening } from './story.js';
@@ -14,6 +14,7 @@ import {
   browserSessionId,
   forgetSeat,
   getSeat,
+  joinAttemptId,
   loadPrefs,
   loadProgress,
   markOpeningSeen,
@@ -29,12 +30,21 @@ const ANSWER_TIMEOUT_MS = 6_000;
 const QUIET_DROP_MS = 1_500;
 /** After this long without a connection, a banner explains what is happening. */
 const BANNER_AFTER_MS = 10_000;
+/** A request or connection still waiting after this long explains that the server may be waking up. */
+const SLOW_MS = 4_000;
+/** After this long, the joining screen also suggests the network may be blocking the connection. */
+const VERY_SLOW_MS = 45_000;
+/** Joining from the start screen shows the joining screen only if it takes longer than this. */
+const CONNECT_SCREEN_DELAY_MS = 400;
+const WAKING_TEXT = 'Waking the game server. If nobody has played for a while, this takes up to a minute.';
 
 const audio = new AudioEngine(loadPrefs().audio);
 
 const app = {
   code: null,
   conn: null,
+  connectTimer: null,
+  enteredAt: 0,
   state: null,
   stateAt: 0,
   campaign: null,
@@ -59,8 +69,8 @@ const chat = new ChatPanel({
 
 const map = createMap($('#map'), {
   onPlay: (stageId) => {
-    audio.unlock();
     if (!app.conn?.send({ t: 'play', stageId })) toast('Not connected, so the stage did not start. Try again in a moment.', 'error');
+    audio.unlock();
   },
 });
 
@@ -69,11 +79,13 @@ const map = createMap($('#map'), {
 const shell = $('#shell');
 const ROOM_SCREENS = ['lobby', 'game', 'result'];
 
+/** Screens: story, connect (loading or joining), menu, and the room's lobby, game and result. */
 function showScreen(name) {
   const changed = app.screen !== name;
   app.screen = name;
   $('#screen-story').hidden = name !== 'story';
-  shell.hidden = name === 'story';
+  $('#screen-connect').hidden = name !== 'connect';
+  shell.hidden = name === 'story' || name === 'connect';
   for (const id of ['menu', ...ROOM_SCREENS]) $(`#screen-${id}`).hidden = id !== name;
   const inRoom = ROOM_SCREENS.includes(name);
   shell.classList.toggle('with-chat', inRoom);
@@ -167,6 +179,7 @@ function startOpening(then) {
 function returnFromOpening() {
   app.screen = null;
   if (app.code && app.state) render();
+  else if (app.code && app.conn) showConnect();
   else showMenu();
 }
 
@@ -216,13 +229,16 @@ function formError(form, message) {
 
 let lookupSeq = 0;
 let lookupTimer = null;
-function checkJoinCode() {
+/** Looks up the code in the join form as it is typed, retrying by itself while the server cannot be reached. */
+function checkJoinCode({ now = false } = {}) {
   const input = $('#join-form [name="code"]');
   const status = $('#join-status');
   const code = normalizeRoomCode(input.value);
   status.className = 'join-status';
   input.removeAttribute('aria-invalid');
+  $('#join-recheck').hidden = true;
   clearTimeout(lookupTimer);
+  const seq = ++lookupSeq; // also stops a lookup still retrying for an earlier code
   if (code.length < 6) {
     status.textContent = '';
     return;
@@ -235,31 +251,43 @@ function checkJoinCode() {
     return;
   }
   status.textContent = 'Checking the code…';
-  const seq = ++lookupSeq;
-  lookupTimer = setTimeout(async () => {
-    const res = await api.lookup(code);
-    if (seq !== lookupSeq) return;
-    if (!res.ok) {
-      status.textContent = res.message;
-      status.classList.add('is-bad');
-      return;
-    }
-    const d = res.data;
-    if (d.status === 'open') {
-      status.textContent = d.hostName ? `${d.hostName} is waiting. You will be the ${ROLE_LABEL[d.role]}.` : `Room found. You will be the ${ROLE_LABEL[d.role]}.`;
-      status.classList.add('is-good');
-    } else if (d.status === 'full') {
-      status.textContent = 'That room already has a Caller and an Operator.';
-      status.classList.add('is-bad');
-    } else if (d.status === 'expired') {
-      status.textContent = d.message;
-      status.classList.add('is-bad');
-    } else {
-      status.textContent = 'No room has that code. Check it with your friend.';
-      status.classList.add('is-bad');
-      input.setAttribute('aria-invalid', 'true');
-    }
-  }, 250);
+  lookupTimer = setTimeout(
+    async () => {
+      const res = await retrying(() => api.lookup(code), {
+        cancelled: () => seq !== lookupSeq,
+        onRetry: () => (status.textContent = 'Can’t reach the game server yet. It may be waking up; checking again…'),
+      });
+      if (seq === lookupSeq) showLookup(res);
+    },
+    now ? 0 : 250,
+  );
+}
+
+function showLookup(res) {
+  const input = $('#join-form [name="code"]');
+  const status = $('#join-status');
+  const recheck = $('#join-recheck');
+  const say = (text, tone, { invalid = false, canRecheck = false } = {}) => {
+    status.textContent = text;
+    status.classList.add(tone);
+    if (invalid) input.setAttribute('aria-invalid', 'true');
+    recheck.hidden = !canRecheck;
+  };
+  if (!res.ok) return say(res.message, 'is-bad', { canRecheck: isTransient(res) });
+  const d = res.data;
+  if (d.status === 'open') {
+    say(d.hostName ? `${d.hostName} is waiting. You will be the ${ROLE_LABEL[d.role]}.` : `Room found. You will be the ${ROLE_LABEL[d.role]}.`, 'is-good');
+  } else if (d.status === 'full') {
+    say('That room already has a Caller and an Operator. Ask your friend for a new invite, or open your own room.', 'is-bad', { canRecheck: true });
+  } else if (d.status === 'expired') {
+    say(d.message, 'is-bad');
+  } else {
+    say(
+      'No room has that code right now. Check it with your friend. If the game server just restarted, the room comes back once your friend’s game reconnects.',
+      'is-bad',
+      { invalid: true, canRecheck: true },
+    );
+  }
 }
 
 function setupMenu() {
@@ -268,8 +296,16 @@ function setupMenu() {
     e.preventDefault();
     formError(createForm, null);
     const data = new FormData(createForm);
+    const status = createForm.querySelector('.form-status');
     setFormBusy(createForm, true, 'Opening…');
+    const slow = setTimeout(() => {
+      status.hidden = false;
+      status.textContent = WAKING_TEXT;
+    }, SLOW_MS);
     const res = await api.createRoom({ name: data.get('name'), role: data.get('role'), mode: data.get('mode'), progress: loadProgress()?.token });
+    clearTimeout(slow);
+    status.hidden = true;
+    status.textContent = '';
     setFormBusy(createForm, false);
     if (!res.ok) {
       formError(createForm, res.message);
@@ -298,8 +334,11 @@ function setupMenu() {
       codeInput.dispatchEvent(new Event('input'));
     }
   });
+  $('#join-recheck').addEventListener('click', () => checkJoinCode({ now: true }));
+  let joining = false;
   joinForm.addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (joining) return; // one join at a time, however often the button is pressed
     formError(joinForm, null);
     const code = normalizeRoomCode(codeInput.value);
     const problem = roomCodeProblem(code);
@@ -314,9 +353,28 @@ function setupMenu() {
       enterRoom(code, existing.token);
       return;
     }
+    joining = true;
+    lookupSeq++; // the join's progress replaces the code check
+    clearTimeout(lookupTimer);
+    const status = $('#join-status');
+    const progress = (text) => {
+      status.className = 'join-status';
+      status.textContent = text;
+      $('#join-recheck').hidden = true;
+    };
     setFormBusy(joinForm, true, 'Joining…');
-    const res = await api.join(code, { name: joinForm.querySelector('[name="name"]').value, progress: loadProgress()?.token });
+    const slow = setTimeout(() => progress(WAKING_TEXT), SLOW_MS);
+    // Every attempt carries the same join id, so a retry gets the seat the
+    // first attempt was given (if it arrived) rather than a second seat.
+    const body = { name: joinForm.querySelector('[name="name"]').value, progress: loadProgress()?.token, joinId: joinAttemptId(code) };
+    const res = await retrying(() => api.join(code, body), {
+      cancelled: () => app.screen !== 'menu' || normalizeRoomCode(codeInput.value) !== code,
+      onRetry: () => progress('Still trying to reach the game server…'),
+    });
+    clearTimeout(slow);
+    joining = false;
     setFormBusy(joinForm, false);
+    progress('');
     if (!res.ok) {
       formError(joinForm, res.message);
       return;
@@ -347,18 +405,9 @@ function enterRoom(code, token) {
   app.outageShown = false;
   app.puzzleKey = null;
   app.stageKey = null;
+  app.enteredAt = Date.now();
   setRoomUrl(code);
   chat.reset(code);
-
-  const connectingTimer = setTimeout(() => {
-    if (!app.welcomed) {
-      showOverlay({
-        title: 'Connecting',
-        body: h('div', {}, h('div', { class: 'spinner-lamp', 'aria-hidden': 'true' }), h('p', {}, `Opening the line to room ${formatRoomCode(code)}…`)),
-        actions: [{ label: 'Back to start', onClick: () => leaveRoom({ local: true }) }],
-      });
-    }
-  }, 400);
 
   const conn = new Connection({
     code,
@@ -367,14 +416,56 @@ function enterRoom(code, token) {
     hello: () => ({ ticket: getSeat(code)?.ticket, progress: loadProgress()?.token, sid: browserSessionId() }),
   });
   app.conn = conn;
-  conn.addEventListener('status', (e) => onConnStatus(e.detail, connectingTimer));
+  conn.addEventListener('status', (e) => onConnStatus(e.detail));
   conn.addEventListener('message', (e) => onMessage(e.detail));
+  // Straight after loading, the joining screen shows at once. From another
+  // screen it waits a moment, so a quick join goes straight to the room.
+  if (!app.screen || app.screen === 'connect') showConnect();
+  else app.connectTimer = setTimeout(showConnect, CONNECT_SCREEN_DELAY_MS);
   conn.connect();
+}
+
+/** The joining screen: which room, what is happening, and what the player can do about it. */
+function showConnect() {
+  if (!app.conn || app.welcomed || app.screen === 'story') return;
+  showScreen('connect');
+  renderConnect();
+}
+
+const setText = (el, text) => {
+  // Unchanged text is left alone, so screen readers do not hear it again.
+  if (el.textContent !== text) el.textContent = text;
+};
+
+function renderConnect() {
+  const conn = app.conn;
+  if (!conn || app.welcomed) return;
+  const waited = Date.now() - app.enteredAt;
+  const offline = navigator.onLine === false;
+  const slow = conn.attempt >= 2 || waited > SLOW_MS;
+  setText($('#connect-title'), `Room ${formatRoomCode(app.code)}`);
+  setText(
+    $('#connect-detail'),
+    offline
+      ? 'You’re offline. Last Call connects as soon as your internet is back.'
+      : conn.restarting
+        ? 'The game server is restarting. This usually takes under a minute.'
+        : waited > VERY_SLOW_MS
+          ? 'Still can’t reach the game server. It may be restarting, or this network may be blocking the connection: keep waiting, or try another network (for example, mobile data).'
+          : slow
+            ? WAKING_TEXT
+            : 'Opening the line…',
+  );
+  const seconds = Math.ceil((conn.retryAt - Date.now()) / 1000);
+  setText($('#connect-retry'), slow && !offline && conn.state === 'reconnecting' ? (seconds > 0 ? `Trying again in ${seconds} s.` : 'Trying again now…') : '');
+  $('#connect-try').hidden = !slow || conn.state === 'connecting';
+  $('#connect-back').hidden = false;
 }
 
 function leaveConnection() {
   if (app.conn) app.conn.stop();
   app.conn = null;
+  clearTimeout(app.connectTimer);
   $('#conn-banner').hidden = true;
   app.controller?.destroy();
   app.controller = null;
@@ -382,16 +473,22 @@ function leaveConnection() {
   app.result = null;
   clearTimeout(app.holdTimer);
   app.holdUntil = 0;
+  audio.stopEffects();
 }
 
-function leaveRoom({ local = false, banner = null, bannerTone, joinCode = null } = {}) {
+/**
+ * Back to the start screen. `forget` drops this browser's seat: right after
+ * leaving, or when the server says the seat or room is gone. Otherwise the seat
+ * is kept, so the invite link (or the code) takes the player straight back.
+ */
+function leaveRoom({ local = false, forget = true, banner = null, bannerTone, joinCode = null } = {}) {
   // Tell the server so the seat is freed; we finish locally without waiting for its reply.
   if (!local) app.conn?.send({ t: 'leave' });
-  if (app.code) forgetSeat(app.code);
+  if (app.code && forget) forgetSeat(app.code);
   leaveConnection();
   app.code = null;
   app.state = null;
-  setRoomUrl(null);
+  setRoomUrl(joinCode); // an invite worth retrying stays in the address, so a reload keeps it
   hideOverlay();
   showMenu({ banner, bannerTone, joinCode });
 }
@@ -408,34 +505,18 @@ function confirmLeave() {
   });
 }
 
-const UNREACHABLE_TITLE = 'Can’t reach the game server';
-
-function onConnStatus(detail, connectingTimer) {
+function onConnStatus(detail) {
   if (detail.state === 'open') {
-    clearTimeout(connectingTimer);
     app.downSince = 0;
     chat.setConnected(true);
     $('#conn-banner').hidden = true;
   } else if (detail.state === 'closed') {
-    clearTimeout(connectingTimer);
     $('#conn-banner').hidden = true;
     onClosed(detail.code, detail.message);
     return;
   } else {
     chat.setConnected(false);
     if (detail.state === 'reconnecting' && !app.downSince) app.downSince = Date.now();
-    if (!app.welcomed && detail.attempt >= 3 && $('#overlay-title').textContent !== UNREACHABLE_TITLE) {
-      showOverlay({
-        title: UNREACHABLE_TITLE,
-        body: detail.offline
-          ? 'You appear to be offline. Last Call will connect as soon as your internet is back.'
-          : 'The game server is not answering. It may be restarting or waking up, which can take about a minute. Last Call keeps trying.',
-        actions: [
-          { label: 'Back to start', onClick: () => leaveRoom({ local: true }) },
-          { label: 'Try now', primary: true, onClick: () => app.conn?.reconnectNow() },
-        ],
-      });
-    }
   }
   tickConnection();
 }
@@ -454,6 +535,7 @@ function connectionLabel() {
 function tickConnection() {
   const conn = app.conn;
   if (!conn) return;
+  if (!app.welcomed && app.screen === 'connect') renderConnect();
   const label = connectionLabel();
   const pill = $('#conn-status');
   pill.classList.toggle('is-live', label === 'connected');
@@ -494,7 +576,8 @@ function onClosed(code, message) {
       title: 'Open in another tab',
       body: 'This room is now open in another tab or on another device. Only one can be connected at a time.',
       actions: [
-        { label: 'Back to start', onClick: () => leaveRoom({ local: true }) },
+        // The other tab is still using this seat, so it must not be forgotten here.
+        { label: 'Back to start', onClick: () => leaveRoom({ local: true, forget: false }) },
         {
           label: 'Play here instead',
           primary: true,
@@ -517,6 +600,10 @@ function onClosed(code, message) {
     leaveRoom({ local: true, banner: message, joinCode: roomCode });
     return;
   }
+  if (code === 'RATE_LIMITED') {
+    leaveRoom({ local: true, forget: false, banner: message, joinCode: roomCode });
+    return;
+  }
   leaveRoom({ local: true, banner: message || 'This room has closed. Open a new room to play again.' });
 }
 
@@ -525,8 +612,7 @@ function onMessage(msg) {
     case 'welcome': {
       const first = !app.welcomed;
       app.welcomed = true;
-      const title = $('#overlay-title').textContent;
-      if (title === 'Connecting' || title === UNREACHABLE_TITLE) hideOverlay();
+      clearTimeout(app.connectTimer);
       app.campaign = msg.campaign;
       saveProgress(msg.progress, msg.campaign);
       chat.setIdentity(msg.state.you);
@@ -1016,6 +1102,9 @@ function setupRoomControls() {
     });
   });
   $('#conn-retry').addEventListener('click', () => app.conn?.reconnectNow());
+  $('#connect-try').addEventListener('click', () => app.conn?.reconnectNow());
+  // Not a goodbye: the server never heard from us, so the seat is kept for when the player comes back.
+  $('#connect-back').addEventListener('click', () => leaveRoom({ local: true, forget: false }));
 }
 
 // ---- Boot -------------------------------------------------------------------------
@@ -1026,35 +1115,25 @@ function boot() {
   setupRoomControls();
   setInterval(tickTimer, 250);
   setInterval(tickConnection, 500);
-
   // Browsers only allow sound after a gesture; nothing plays before the first one.
-  const unlockOnce = () => {
-    audio.unlock();
-    if (audio.unlocked) {
-      document.removeEventListener('pointerdown', unlockOnce, true);
-      document.removeEventListener('keydown', unlockOnce, true);
-    }
-  };
-  document.addEventListener('pointerdown', unlockOnce, true);
-  document.addEventListener('keydown', unlockOnce, true);
+  audio.attach();
 
   const raw = new URLSearchParams(location.search).get('room');
   const code = raw ? normalizeRoomCode(raw) : null;
   const valid = code && !roomCodeProblem(code);
   const seat = valid && getSeat(code);
-  if (seat) {
-    // Back in a room (reload, or returning from another app): straight in.
-    enterRoom(code, seat.token);
-    return;
-  }
   const toMenu = () =>
     raw
       ? valid
         ? showMenu({ joinCode: code })
         : showMenu({ banner: `That invite link is broken: ${roomCodeProblem(code)} Ask your friend for the code.` })
       : showMenu();
-  if (openingSeen()) toMenu();
+  // Back in a room (reload, or returning from another app): straight in.
+  if (seat) enterRoom(code, seat.token);
+  else if (openingSeen()) toMenu();
   else startOpening(toMenu);
+  // Tells boot.js the game started, so it never replaces this screen with a loading error.
+  document.documentElement.dataset.booted = 'true';
 }
 
 boot();

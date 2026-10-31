@@ -4,46 +4,84 @@ const OFFLINE_MESSAGE = 'You appear to be offline. Check your internet connectio
 const UNREACHABLE_MESSAGE =
   'Could not reach the game server. It may be restarting or waking up, which can take about a minute. Try again shortly.';
 const UNAVAILABLE_MESSAGE = 'The game server is restarting or unavailable. Wait a minute, then try again.';
+const TIMEOUT_MESSAGE = 'The game server is taking too long to answer. It may still be waking up, which can take about a minute. Try again shortly.';
 
-async function request(path, options = {}) {
-  let res;
+/**
+ * A JSON request that always settles: never throws, and gives up after
+ * `timeoutMs` (a request can otherwise hang for minutes on a dead network).
+ */
+export async function request(path, { timeoutMs = 0, ...options } = {}) {
+  const controller = timeoutMs > 0 && typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
   try {
-    res = await fetch(path, {
-      ...options,
-      headers: { 'content-type': 'application/json', ...(options.headers || {}) },
-    });
-  } catch {
-    const offline = navigator.onLine === false;
-    return { ok: false, status: 0, error: offline ? 'OFFLINE' : 'UNREACHABLE', message: offline ? OFFLINE_MESSAGE : UNREACHABLE_MESSAGE };
+    let res;
+    try {
+      res = await fetch(path, {
+        ...options,
+        ...(controller ? { signal: controller.signal } : {}),
+        headers: { 'content-type': 'application/json', ...(options.headers || {}) },
+      });
+    } catch {
+      if (controller?.signal.aborted) return { ok: false, status: 0, error: 'TIMEOUT', message: TIMEOUT_MESSAGE };
+      const offline = navigator.onLine === false;
+      return { ok: false, status: 0, error: offline ? 'OFFLINE' : 'UNREACHABLE', message: offline ? OFFLINE_MESSAGE : UNREACHABLE_MESSAGE };
+    }
+    let body = {};
+    try {
+      body = await res.json();
+    } catch {
+      body = {}; // e.g. a proxy's HTML error page while the server is down
+    }
+    if (controller?.signal.aborted) return { ok: false, status: 0, error: 'TIMEOUT', message: TIMEOUT_MESSAGE };
+    if (!res.ok) {
+      const unavailable = res.status === 502 || res.status === 503 || res.status === 504;
+      return {
+        ok: false,
+        status: res.status,
+        error: body.error || (unavailable ? 'UNAVAILABLE' : 'SERVER_ERROR'),
+        message: body.message || (unavailable ? UNAVAILABLE_MESSAGE : 'Something went wrong on the game server. Try again in a moment.'),
+      };
+    }
+    return { ok: true, status: res.status, data: body };
+  } finally {
+    clearTimeout(timer);
   }
-  let body = {};
-  try {
-    body = await res.json();
-  } catch {
-    body = {}; // e.g. a proxy's HTML error page while the server is down
+}
+
+/** A failure that may clear up by itself: no network, a timeout, or the server restarting or waking. */
+export const isTransient = (res) => !res.ok && (res.status === 0 || res.status === 502 || res.status === 503 || res.status === 504);
+
+/** Waits between retries of a request that failed for a passing reason. */
+export const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000];
+
+/**
+ * Runs `attempt` until it succeeds, fails for good, or the delays run out.
+ * Only use it for requests that are safe to repeat (lookups, and joins, which
+ * carry an id so the server never gives out a second seat).
+ */
+export async function retrying(attempt, { delays = RETRY_DELAYS_MS, onRetry = () => {}, cancelled = () => false, wait = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+  let res = await attempt();
+  for (const delayMs of delays) {
+    if (!isTransient(res) || cancelled()) break;
+    onRetry({ delayMs, res });
+    await wait(delayMs);
+    if (cancelled()) break;
+    res = await attempt();
   }
-  if (!res.ok) {
-    const unavailable = res.status === 502 || res.status === 503 || res.status === 504;
-    return {
-      ok: false,
-      status: res.status,
-      error: body.error || (unavailable ? 'UNAVAILABLE' : 'SERVER_ERROR'),
-      message: body.message || (unavailable ? UNAVAILABLE_MESSAGE : 'Something went wrong on the game server. Try again in a moment.'),
-    };
-  }
-  return { ok: true, status: res.status, data: body };
+  return res;
 }
 
 export const api = {
+  // Not retried automatically: a repeat would open a second room.
   createRoom: ({ name, role, mode, progress }) =>
-    request('/api/rooms', { method: 'POST', body: JSON.stringify({ name, role, mode, progress }) }),
-  lookup: (code) => request(`/api/rooms/${encodeURIComponent(code)}`),
-  join: (code, { name, progress }) =>
-    request(`/api/rooms/${encodeURIComponent(code)}/join`, { method: 'POST', body: JSON.stringify({ name, progress }) }),
+    request('/api/rooms', { method: 'POST', body: JSON.stringify({ name, role, mode, progress }), timeoutMs: 60_000 }),
+  lookup: (code) => request(`/api/rooms/${encodeURIComponent(code)}`, { timeoutMs: 15_000 }),
+  join: (code, { name, progress, joinId }) =>
+    request(`/api/rooms/${encodeURIComponent(code)}/join`, { method: 'POST', body: JSON.stringify({ name, progress, joinId }), timeoutMs: 30_000 }),
 };
 
 /** Server close reasons that mean "stop trying": reconnecting cannot help. */
-const TERMINAL = new Set(['ROOM_CLOSED', 'ROOM_NOT_FOUND', 'SEAT_LOST', 'REPLACED', 'LEFT']);
+const TERMINAL = new Set(['ROOM_CLOSED', 'ROOM_NOT_FOUND', 'SEAT_LOST', 'REPLACED', 'LEFT', 'RATE_LIMITED']);
 
 const TICK_MS = 5_000;
 const PING_EVERY_MS = 15_000;

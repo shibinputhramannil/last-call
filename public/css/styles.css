@@ -555,6 +555,14 @@ main {
 .join-status.is-bad {
   color: var(--signal-red);
 }
+.join-recheck {
+  justify-self: start;
+  margin-top: -0.75rem;
+}
+.form-status {
+  font-size: var(--step--1);
+  color: var(--ink-dim);
+}
 
 .how-steps {
   margin: 0;
@@ -1891,6 +1899,82 @@ button.line-jack:hover {
   to {
     opacity: 1;
   }
+}
+
+/* ---- Loading and joining ------------------------------------------------------ */
+
+.connect {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: var(--gutter);
+  padding-bottom: max(5rem, env(safe-area-inset-bottom));
+  text-align: center;
+  background:
+    radial-gradient(60% 45% at 50% 34%, rgba(242, 168, 59, 0.1), transparent 70%),
+    var(--bakelite);
+}
+.connect-mark {
+  display: block;
+  width: min(18rem, 64vw);
+  height: auto;
+  overflow: visible;
+  filter: drop-shadow(0 12px 22px rgba(0, 0, 0, 0.5));
+}
+.connect-lamp {
+  margin: 0.25rem auto 0;
+}
+.connect-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(1.6rem, 6vw, 2.2rem);
+  font-weight: 400;
+}
+.connect-detail {
+  max-width: 32rem;
+  margin: 0;
+  color: var(--ink-dim);
+  text-wrap: balance;
+}
+.connect-retry {
+  min-height: 1.55em;
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink-dim);
+}
+.connect-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
+}
+/* Appears after a while even if no script ever runs; gone once the game has started. */
+.connect-reload {
+  text-decoration: none;
+  visibility: hidden;
+  animation: connect-reveal 0s 12s forwards;
+}
+.connect-reload.is-shown {
+  visibility: visible;
+  animation: none;
+}
+[data-booted] .connect-reload:not(.is-shown) {
+  display: none;
+}
+@keyframes connect-reveal {
+  to {
+    visibility: visible;
+  }
+}
+.connect.is-stuck .connect-lamp {
+  animation: none;
+  background: var(--signal-red);
+}
+body:has(#screen-connect:not([hidden])) .skip-link {
+  display: none;
 }
 
 /* ---- Opening story ---------------------------------------------------------- */

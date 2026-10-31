@@ -123,6 +123,18 @@ test('terminal reasons stop reconnecting; a restart keeps trying', () => {
   assert.equal(FakeSocket.all.length, count, 'no more attempts after a terminal reason');
 });
 
+test('being rate limited for wrong seat details stops reconnecting instead of hammering the server', () => {
+  conn.connect();
+  latest().open();
+  latest().receive({ t: 'closed', code: 'RATE_LIMITED', message: 'Too many attempts.' });
+  latest().close();
+  assert.equal(conn.state, 'closed');
+  assert.equal(states[states.length - 1].code, 'RATE_LIMITED');
+  const count = FakeSocket.all.length;
+  advance(60_000);
+  assert.equal(FakeSocket.all.length, count);
+});
+
 test('retries back off, first almost at once, then up to fifteen seconds', () => {
   conn.connect();
   const delays = [];

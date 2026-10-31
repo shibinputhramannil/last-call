@@ -123,6 +123,7 @@ The game is built so that drops are calm and nothing is lost.
 - **Everything comes back:** the same room, role, stage, puzzle, chat history, score and progress, after a drop or a page reload.
 - **Messages** you send while disconnected wait and go as soon as you are back. Each one is confirmed by the server; if a confirmation doesn't arrive, the game re-sends it automatically, and the server never posts a message twice. Unsent messages and your half-typed draft survive reloading the page.
 - **If the server restarts** (for example after an update), players see "The game server is restarting" and their browsers reconnect when it is back. See [Persistence](#persistence) for exactly what is kept.
+- **Opening an invite link** shows which room it is at once, before the game has even loaded. If the server is waking up or can't be reached, the page says so, keeps trying, and offers **Try now** and **Back to start** (your seat is kept). If the game itself fails to load, the page says that too and offers a reload.
 
 ## Deploy for public play
 
@@ -483,7 +484,8 @@ There is no build step: the browser loads the files in `public/` and `shared/` a
 
 ```
 public/             Browser client (plain HTML, CSS and ES modules, no build step)
-  index.html        The page; the server fills in its share-preview tags
+  index.html        The page and its loading screen; the server fills in its share-preview tags
+  js/boot.js        Runs first: turns on the web fonts, reports a game that failed to load
   js/main.js        Screens, room flow, connection status, stage clock, hints
   js/net.js         Room API calls and the self-reconnecting WebSocket
   js/heartbeat-worker.js  Heartbeat ticks that keep going in background tabs
@@ -535,6 +537,7 @@ render.yaml         Render Blueprint (one web service)
 - **Seat tokens.** Joining gives your browser a random 128-bit seat token. It's kept in `localStorage`, so a reload or a dropped connection puts you straight back in your seat.
 - **Room tickets.** The server also gives each seat a signed ticket (room code, role, and a fingerprint of the seat token, never the token itself). After a restart without saved rooms, the first player to reconnect rebuilds the room from their ticket, and their partner's ticket puts them back in the other seat.
 - **Taking over a seat.** If a player has been gone for more than 20 seconds, someone joining with the code can take their seat.
+- **Retried joins.** Each join carries a random id from the browser tab. If the reply is lost and the browser tries again (or the page reloads), the server hands back the seat it already gave for the next 10 minutes, never a second seat or someone else's. It keeps only a fingerprint of the id.
 - **Another tab.** Opening the same seat in a second tab moves the connection there, and the first tab says so.
 
 **Detecting dead connections.**

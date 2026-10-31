@@ -46,6 +46,8 @@ This describes what Last Call protects, from whom, how, and where the limits are
 **Tokens and signatures.**
 - Seat tokens are 128-bit random values, compared in constant time.
 - Progress and room tickets are HMAC-signed with `SAVE_SECRET`. A ticket holds only a fingerprint of its seat token.
+- A join id (random, made by the browser tab so a retried join gets the same seat back) is kept by the server only as a fingerprint, is honoured for 10 minutes, and is never sent back or logged. It can only return the seat it created.
+- Messages from a socket that no longer holds its seat (replaced by another tab, or left) are ignored.
 
 **Browser protections.**
 - A strict Content-Security-Policy: scripts and styles from the site only (plus Google Fonts styles for the game), no inline code, no framing (`frame-ancestors 'none'`, `X-Frame-Options: DENY`).

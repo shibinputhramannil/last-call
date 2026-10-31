@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { STAGES } from '../shared/campaign.js';
 import { TRANSITION_MS, ANSWER_COOLDOWN_MS } from '../server/game.js';
 import { PUZZLES } from '../server/puzzles/index.js';
-import { RoomManager, PRESENCE_GRACE_MS, SEAT_RECLAIM_MS, cleanChat, cleanName } from '../server/rooms.js';
+import { RoomManager, JOIN_REPLAY_MS, PRESENCE_GRACE_MS, SEAT_RECLAIM_MS, cleanChat, cleanName } from '../server/rooms.js';
 import { createSigner } from '../server/signing.js';
 
 class FakeSocket {
@@ -160,6 +160,110 @@ test('an abandoned seat can be reclaimed with the code after a grace period', ()
   const { seat } = ctx.manager.join(ctx.room.code, { name: 'New' });
   assert.equal(seat.role, 'operator');
   assert.equal(ctx.manager.attach(ctx.room.code, guest.token, new FakeSocket()).error, 'SEAT_LOST');
+});
+
+test('a retried join gets back the seat it was given, once; nobody else gets a second seat', () => {
+  const ctx = setup();
+  const joinId = 'join-attempt-0123456789';
+  const first = ctx.manager.join(ctx.room.code, { name: 'Grace', joinId });
+  const states = ctx.hostSocket.all('state').length;
+  const texts = ctx.hostSocket.systemTexts().length;
+  // The reply was lost, the browser timed out, or the page reloaded: the same join again.
+  const again = ctx.manager.join(ctx.room.code, { name: 'Grace', joinId });
+  assert.equal(again.seat, first.seat);
+  assert.equal(again.seat.token, first.seat.token);
+  assert.equal(again.replayed, true);
+  assert.equal(ctx.hostSocket.all('state').length, states, 'a replay changes nothing the host can see');
+  assert.equal(ctx.hostSocket.systemTexts().length, texts);
+  assert.equal(ctx.manager.join(ctx.room.code, { name: 'Eve', joinId: 'someone-else-0123456789' }).error, 'FULL');
+  assert.equal(ctx.manager.join(ctx.room.code, { name: 'Eve' }).error, 'FULL');
+  assert.equal(ctx.room.seatList.length, 2);
+
+  // Nothing in the room's saved state can be used to recover the id.
+  assert.ok(!JSON.stringify(ctx.room.toJSON(ctx.clock.t)).includes(joinId));
+  // The id only stands for that seat for a while; later it is an ordinary join.
+  ctx.tick(JOIN_REPLAY_MS + 1);
+  const late = ctx.manager.join(ctx.room.code, { joinId });
+  assert.equal(late.replayed, undefined);
+  assert.notEqual(late.seat.token, first.seat.token);
+});
+
+test('a join retried while the host is away gets its own seat back, never the host’s', () => {
+  const ctx = setup();
+  const joinId = 'join-attempt-0123456789';
+  const { seat } = ctx.manager.join(ctx.room.code, { name: 'Grace', joinId });
+  // The host's phone goes to the background; the joiner's first reply was lost.
+  ctx.manager.detach(ctx.room, ctx.host, ctx.hostSocket);
+  ctx.tick(SEAT_RECLAIM_MS + 5_000);
+  const retry = ctx.manager.join(ctx.room.code, { name: 'Grace', joinId });
+  assert.equal(retry.seat, seat);
+  assert.equal(ctx.room.seats.caller, ctx.host, 'the host keeps their seat');
+  assert.ok(ctx.manager.attach(ctx.room.code, ctx.host.token, new FakeSocket()).seat, 'and can come back to it');
+});
+
+test('an old join id cannot take back a seat that was handed to someone else', () => {
+  const ctx = setup();
+  const joinId = 'join-attempt-0123456789';
+  const { seat } = ctx.manager.join(ctx.room.code, { name: 'Grace', joinId });
+  ctx.tick(SEAT_RECLAIM_MS + 1);
+  const taken = ctx.manager.join(ctx.room.code, { name: 'New', joinId: 'newcomer-0123456789ab' });
+  assert.notEqual(taken.seat, seat);
+  assert.equal(ctx.manager.join(ctx.room.code, { name: 'Grace', joinId }).error, 'FULL');
+  assert.equal(ctx.room.seats.operator, taken.seat);
+});
+
+test('a reconnecting player returns to their own seat; a newcomer cannot take it meanwhile', () => {
+  const ctx = setup();
+  const { guest, guestSocket } = addGuest(ctx);
+  ctx.manager.handle(ctx.room, ctx.host, { t: 'play', stageId: STAGES[0].id });
+  const runId = ctx.room.game.run.id;
+  ctx.manager.detach(ctx.room, guest, guestSocket);
+  ctx.tick(SEAT_RECLAIM_MS - 1_000);
+  assert.equal(ctx.manager.join(ctx.room.code, { name: 'Eve' }).error, 'FULL');
+  const back = new FakeSocket();
+  const again = ctx.manager.attach(ctx.room.code, guest.token, back);
+  assert.equal(again.seat, guest);
+  assert.equal(back.last('welcome').state.you.role, 'operator');
+  assert.equal(back.last('welcome').state.game.runId, runId, 'the same stage carries on');
+  assert.equal(ctx.room.seatList.length, 2);
+});
+
+test('a socket that lost its seat (another tab, or a reconnection) can no longer act for the player', () => {
+  const ctx = setup();
+  const { guest } = addGuest(ctx);
+  const newer = new FakeSocket();
+  ctx.manager.attach(ctx.room.code, ctx.host.token, newer);
+  // Late messages from the replaced socket: none of them may act.
+  ctx.manager.handle(ctx.room, ctx.host, { t: 'play', stageId: STAGES[0].id }, ctx.hostSocket);
+  assert.equal(ctx.room.game.playing, false);
+  ctx.manager.handle(ctx.room, ctx.host, { t: 'leave' }, ctx.hostSocket);
+  assert.equal(ctx.room.seats.caller, ctx.host, 'the seat stays with the live socket');
+  assert.equal(ctx.host.socket, newer);
+  // The live socket still works.
+  ctx.manager.handle(ctx.room, ctx.host, { t: 'play', stageId: STAGES[0].id }, newer);
+  assert.equal(ctx.room.game.playing, true);
+  // After leaving, the old seat object can do nothing either.
+  ctx.manager.handle(ctx.room, guest, { t: 'leave' }, guest.socket);
+  const runId = ctx.room.game.run.id;
+  ctx.manager.handle(ctx.room, guest, { t: 'map', from: runId }, null);
+  assert.equal(ctx.room.game.playing, true);
+});
+
+test('pressing Play again, or both players pressing it, never restarts a stage in progress', () => {
+  const ctx = setup();
+  const { guest, guestSocket } = addGuest(ctx);
+  const play = (seat) => ctx.manager.handle(ctx.room, seat, { t: 'play', stageId: STAGES[0].id });
+  play(ctx.host);
+  const runId = ctx.room.game.run.id;
+  const round = ctx.room.game.round.id;
+  ctx.tick(1_000);
+  play(ctx.host);
+  play(guest);
+  play(ctx.host);
+  assert.equal(ctx.room.game.run.id, runId);
+  assert.equal(ctx.room.game.round.id, round);
+  assert.equal(guestSocket.all('event').filter((e) => e.name === 'stage-started').length, 1);
+  assert.equal(ctx.hostSocket.systemTexts().filter((t) => /opened Stage/.test(t)).length, 1);
 });
 
 test('chat is delivered once even when retried, and empty or flooding messages fail clearly', () => {

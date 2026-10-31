@@ -50,11 +50,12 @@ export function setupSettings({ audio, onReplayOpening }) {
     for (const radio of $$('[name="set-text"]')) radio.checked = radio.value === prefs.textSize;
     $('#set-contrast').checked = prefs.contrast === 'high';
     $('#set-manual-font').checked = prefs.manualFont !== 'plain';
-    note.textContent = audio.unlocked
-      ? prefs.audio.muted
-        ? 'Sound is muted.'
-        : 'Sound is on.'
-      : 'Sound starts after you first click or press a key.';
+    note.textContent = {
+      on: prefs.audio.muted ? 'Sound is muted.' : 'Sound is on.',
+      off: 'Sound starts after you first tap, click or press a key.',
+      paused: 'Your browser paused the sound. Tap or press a key to turn it back on.',
+      unavailable: 'Sound is not available in this browser. Everything else works as normal.',
+    }[audio.status];
     button.classList.toggle('is-muted', prefs.audio.muted);
   }
 

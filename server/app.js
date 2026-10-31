@@ -219,7 +219,7 @@ export function createApp(
           return sendJson(req, res, 400, { error: 'BAD_REQUEST', message: 'The request could not be read.' });
         }
         const clean = validateRoomBody(body);
-        const result = rooms.join(code, { name: clean.name, progress: clean.progress });
+        const result = rooms.join(code, { name: clean.name, progress: clean.progress, joinId: clean.joinId });
         if (result.error === 'EXPIRED') return sendJson(req, res, 410, { error: 'EXPIRED', message: result.message });
         if (result.error) {
           const [status, message] = joinErrors[result.error];
@@ -259,6 +259,9 @@ export function createApp(
       SHARE_TITLE: room ? SHARE.inviteTitle(room) : SHARE.title,
       SHARE_DESCRIPTION: room ? SHARE.inviteDescription : SHARE.description,
       SITE_VERIFICATION: config.googleSiteVerification || '',
+      // The loading screen, shown before any script runs.
+      CONNECT_TITLE: room ? `Room ${formatRoomCode(room)}` : 'Opening the line',
+      CONNECT_DETAIL: room ? 'Loading your invite…' : 'Loading Last Call…',
     };
     let template = await indexTemplate();
     // The Search Console verification tag appears only when it is configured.
@@ -417,7 +420,7 @@ export function createApp(
       }
       if (msg.t === 'hello') return;
       try {
-        rooms.handle(room, seat, msg);
+        rooms.handle(room, seat, msg, ws);
       } catch (err) {
         log.error('message handling failed', { type: msg.t, room: room.code, err });
         rooms.notice(room, seat, 'SERVER_ERROR', 'Something went wrong on the server. Try that again.');

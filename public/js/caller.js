@@ -682,7 +682,7 @@ function partyLine(root, view, ctx) {
       log.children[i].classList.add('is-playing');
       lamp.className = `ringer-lamp is-on${ring.echo ? ' is-dim' : ''}`;
       lamp.style.setProperty('--pattern', `"${ring.cadence}"`);
-      ctx.audio.play('cadence', { pattern: ring.cadence });
+      ctx.audio.play('cadence', { pattern: ring.cadence, channel: 'ringer' });
       const length = [...ring.cadence].reduce((t, c) => t + (c === 'L' ? 730 : 380), 0);
       i++;
       playing = setTimeout(next, length + 600);
@@ -725,6 +725,7 @@ function partyLine(root, view, ctx) {
     },
     destroy() {
       clearTimeout(playing);
+      ctx.audio.stop('ringer');
     },
   };
 }

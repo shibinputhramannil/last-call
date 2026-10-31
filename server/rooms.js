@@ -17,6 +17,11 @@ export const SEAT_RECLAIM_MS = 20_000;
  * still stops at once, so nobody loses time to the network.)
  */
 export const PRESENCE_GRACE_MS = 8_000;
+/**
+ * A join retried with the same join id within this time gets back the seat it
+ * was given the first time (its reply may have been lost), never a second one.
+ */
+export const JOIN_REPLAY_MS = 10 * 60_000;
 const TOMBSTONE_MS = 12 * 3_600_000;
 const MAX_TOMBSTONES = 20_000;
 const ROOM_FORMAT = 1;
@@ -67,6 +72,8 @@ class Seat {
     this.dropAnnounced = false;
     this.connectedAt = null;
     this.sessionKey = null; // keyed hash of the browser session, for anonymous statistics
+    this.joinKey = null; // fingerprint of the join id that created this seat (never the id itself)
+    this.joinedAt = now;
     this.recentClientIds = new Map();
     this.chatLimiter = new RateLimiter({ capacity: 6, perMs: 8_000 });
     this.typingLimiter = new RateLimiter({ capacity: 1, perMs: 1_500 });
@@ -96,6 +103,8 @@ class Seat {
       lastSeenAt: this.lastSeenAt,
       connectedAt: this.connectedAt,
       sessionKey: this.sessionKey,
+      joinKey: this.joinKey,
+      joinedAt: this.joinedAt,
     };
   }
 }
@@ -218,6 +227,8 @@ export class Room {
       seat.lastSeenAt = now;
       seat.connectedAt = Number.isFinite(s.connectedAt) ? s.connectedAt : null;
       seat.sessionKey = typeof s.sessionKey === 'string' ? s.sessionKey : null;
+      seat.joinKey = typeof s.joinKey === 'string' ? s.joinKey : null;
+      seat.joinedAt = Number.isFinite(s.joinedAt) ? s.joinedAt : now;
       for (const m of room.chat) if (m.kind === 'player' && m.role === role && m.clientId) seat.recentClientIds.set(m.clientId, m);
       room.seats[role] = seat;
     }
@@ -437,17 +448,23 @@ export class RoomManager {
     return null;
   }
 
-  join(code, { name, progress = null }) {
+  join(code, { name, progress = null, joinId = null }) {
     const found = this.lookup(code);
     if (found.status === 'not_found') return { error: 'NOT_FOUND' };
     if (found.status === 'expired') return { error: 'EXPIRED', message: found.message };
     const room = this.rooms.get(code);
+    const now = this.now();
+    // A retry of a join that already succeeded (the reply was lost, the browser
+    // timed out, or the page reloaded): the same seat again, with no side effects.
+    const joinKey = joinId ? fingerprint(`join:${joinId}`) : null;
+    const earlier = joinKey && room.seatList.find((s) => s.joinKey === joinKey && now - s.joinedAt < JOIN_REPLAY_MS);
+    if (earlier) return { room, seat: earlier, replayed: true };
     const open = this.openSeat(room);
     if (!open) return { error: 'FULL' };
-    const now = this.now();
     const replaced = room.seats[open.role];
     if (replaced) this.endSession(room, replaced, replaced.lastSeenAt);
     const seat = new Seat(open.role, cleanName(name), now);
+    seat.joinKey = joinKey;
     room.seats[open.role] = seat;
     room.lastActiveAt = now;
     if (open.reclaim) room.system(`A new ${ROLE_LABEL[open.role]} is taking over the line.`, now);
@@ -678,7 +695,13 @@ export class RoomManager {
 
   // ---- Client messages --------------------------------------------------------
 
-  handle(room, seat, msg) {
+  /**
+   * A message from a seated player. Pass the socket it came on: a socket that
+   * no longer holds the seat (replaced by a newer tab or reconnection, or left)
+   * is ignored, so a late message from it can never act for the player.
+   */
+  handle(room, seat, msg, socket = seat.socket) {
+    if (socket !== seat.socket || room.seats[seat.role] !== seat || this.rooms.get(room.code) !== room) return;
     const now = this.now();
     room.lastActiveAt = now;
     switch (msg.t) {

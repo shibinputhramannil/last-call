@@ -116,6 +116,71 @@ test('the page carries absolute share-preview tags in its first response, for th
   assert.equal(meta(junk, 'og:url'), `${base}/`);
 });
 
+test('an invite shows a loading screen in the first response, before any script runs', async () => {
+  const page = await (await fetch(base + '/?room=k7q-m3x')).text();
+  const connect = page.match(/<section id="screen-connect"[^>]*>([\s\S]*?)<\/section>/);
+  assert.ok(connect, 'the loading screen is in the page');
+  assert.ok(!/<section id="screen-connect"[^>]*\bhidden\b/.test(page), 'and visible from the first paint');
+  assert.match(connect[1], /Room K7Q-M3X/);
+  assert.match(connect[1], /href=""[^>]*>Reload the page/, 'a way out even if no script ever runs');
+  for (const id of ['screen-story', 'shell']) assert.match(page, new RegExp(`id="${id}"[^>]*\\bhidden\\b`), `${id} starts hidden`);
+  assert.match(await (await fetch(base + '/')).text(), /<h1 id="connect-title"[^>]*>Opening the line</);
+
+  // Nothing from another host can hold up the first paint.
+  assert.match(page, /<link\s+id="font-css"\s+rel="stylesheet"\s+media="print"/);
+  // boot.js runs before the modules, to report a load failure on that screen.
+  assert.ok(page.indexOf('src="/js/boot.js" defer') > 0 && page.indexOf('src="/js/boot.js"') < page.indexOf('src="/js/main.js"'));
+  const boot = await fetch(base + '/js/boot.js');
+  assert.equal(boot.status, 200);
+  assert.match(boot.headers.get('content-type'), /javascript/);
+});
+
+test('every module the game imports is preloaded, so the page never waits on an import waterfall', async () => {
+  const page = await (await fetch(base + '/')).text();
+  const preloaded = new Set([...page.matchAll(/<link rel="modulepreload" href="([^"]+)"/g)].map((m) => m[1]));
+  const graph = new Set();
+  const visit = async (url) => {
+    const source = await (await fetch(base + url)).text();
+    for (const [, spec] of source.matchAll(/^import\s[^'"]*['"]([^'"]+)['"]/gm)) {
+      const dep = new URL(spec, base + url).pathname;
+      if (graph.has(dep)) continue;
+      graph.add(dep);
+      await visit(dep);
+    }
+  };
+  await visit('/js/main.js');
+  assert.deepEqual([...preloaded].sort(), [...graph].sort());
+});
+
+test('a retried join gets the same seat back; another player still finds the room full', async () => {
+  const created = await (await post('/api/rooms', { name: 'Ada', role: 'caller', mode: 'untimed' })).json();
+  const joinId = 'integration-join-0123456789';
+  const first = await post(`/api/rooms/${created.code}/join`, { name: 'Grace', joinId });
+  const firstBody = await first.json();
+  const again = await post(`/api/rooms/${created.code}/join`, { name: 'Grace', joinId });
+  const againBody = await again.json();
+  assert.equal(first.status, 200);
+  assert.equal(again.status, 200);
+  assert.equal(againBody.token, firstBody.token);
+  assert.equal(againBody.role, 'operator');
+  assert.ok(!JSON.stringify(firstBody).includes(joinId), 'the join id is never sent back');
+  assert.equal((await post(`/api/rooms/${created.code}/join`, { name: 'Eve', joinId: 'someone-else-0123456789' })).status, 409);
+  assert.equal((await post(`/api/rooms/${created.code}/join`, { name: 'Eve' })).status, 409);
+
+  // The seat works, and the host hears of exactly one new partner.
+  const host = connect(created.code, created.token);
+  await host.opened;
+  await host.waitFor((m) => m.t === 'welcome');
+  const guest = connect(created.code, firstBody.token);
+  await guest.opened;
+  assert.equal((await guest.waitFor((m) => m.t === 'welcome')).state.you.role, 'operator');
+  await host.waitFor((m) => m.t === 'chat' && /Grace joined as the Operator/.test(m.message.text));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(host.received.filter((m) => m.t === 'chat' && /joined as the Operator/.test(m.message.text)).length, 1);
+  await guest.close();
+  await host.close();
+});
+
 test('two players can create, join, chat, play a whole stage, continue, and reconnect', async () => {
   const created = await post('/api/rooms', { name: 'Ada', role: 'caller', mode: 'timed' });
   assert.equal(created.status, 201);

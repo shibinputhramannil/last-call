@@ -1,4 +1,10 @@
 // Procedural sound: no audio files, nothing plays until the player interacts.
+//
+// Browsers let sound start only inside a user gesture, and can stop it again at
+// any time: a background tab, a phone call, another app taking the speaker. So
+// the engine listens for gestures for as long as the page is open and resumes
+// whenever it is allowed to. No sound problem ever reaches the game: every
+// public method can be called at any time and never throws.
 
 const midi = (n) => 440 * 2 ** ((n - 69) / 12);
 
@@ -21,17 +27,44 @@ const MOODS = {
   lost: { filter: 240, pad: 0.04, bells: [12, 20], clanks: [8, 16] },
 };
 
+/** Events that let sound start. A touch only counts when the finger lifts, so pointerdown counts for a mouse alone. */
+const GESTURES = ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown'];
+/** Music events are scheduled this far ahead, so a busy page never makes them late. */
+const LOOKAHEAD = 0.1;
+/** Time constant of the fade when the tab is hidden or shown, so sound never stops with a click. */
+const FADE = 0.015;
+/** The browser stopping sound by itself is retried at most this often without a gesture. */
+const AUTO_RESUME_MS = 1_000;
+/** Where sound effects go unless they ask for a channel of their own. */
+const SCENE = 'scene';
+
 export class AudioEngine {
   constructor(prefs) {
     this.prefs = { ...prefs };
     this.ctx = null;
+    this.ready = false; // the graph is built and music is running on this.ctx
+    this.failed = false;
+    this.attached = false;
     this.mood = 'menu';
     this.intensity = 0;
+    this.filterIntensity = 0;
     this.listeners = new Set();
+    this.channels = new Map(); // name -> { out, verb }
+    this.fx = null; // the channel the effect being built plays on
+    this.scheduler = null;
+    this.suspendTimer = null;
+    this.lastAutoResume = 0;
   }
 
   get unlocked() {
-    return this.ctx != null && this.ctx.state === 'running';
+    return this.ready && this.ctx.state === 'running';
+  }
+
+  /** 'off' before the first gesture, 'on', 'paused' (stopped by the browser; a tap restarts it) or 'unavailable'. */
+  get status() {
+    if (this.failed) return 'unavailable';
+    if (!this.ready) return 'off';
+    return this.unlocked ? 'on' : 'paused';
   }
 
   onChange(fn) {
@@ -42,47 +75,184 @@ export class AudioEngine {
     for (const fn of this.listeners) fn(this);
   }
 
-  /** Must run inside a user gesture (click / keydown). Safe to call repeatedly. */
+  /** Listens for gestures and tab visibility for the life of the page. Safe to call more than once. */
+  attach() {
+    if (this.attached) return;
+    this.attached = true;
+    const onGesture = (e) => {
+      if (e.type === 'pointerdown' && e.pointerType !== 'mouse') return;
+      if (!this.unlocked) this.unlock();
+    };
+    for (const type of GESTURES) document.addEventListener(type, onGesture, { capture: true, passive: true });
+    document.addEventListener('visibilitychange', () => this.onVisibility());
+  }
+
+  /** Starts or resumes sound. Call it inside a user gesture; at any other time it does no harm. */
   unlock() {
-    if (this.ctx) {
-      if (this.ctx.state === 'suspended') this.ctx.resume().then(() => this.changed());
+    if (this.failed) return;
+    try {
+      if (this.ctx) this.resume();
+      else this.create();
+    } catch {
+      this.fail();
+    }
+  }
+
+  create() {
+    // Outside a gesture the context could only start suspended, so wait for one.
+    const activation = globalThis.navigator?.userActivation;
+    if (activation && !activation.isActive) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) {
+      this.fail();
       return;
     }
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    const ctx = new AC();
+    // A slightly larger buffer than the default rides out busy moments without crackling.
+    let ctx;
+    try {
+      ctx = new AC({ latencyHint: 'balanced' });
+    } catch {
+      ctx = new AC();
+    }
     this.ctx = ctx;
-
-    this.master = ctx.createGain();
-    const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -16;
-    comp.ratio.value = 3;
-    this.master.connect(comp).connect(ctx.destination);
-
-    this.musicBus = ctx.createGain();
-    this.sfxBus = ctx.createGain();
-    this.musicBus.connect(this.master);
-    this.sfxBus.connect(this.master);
-
-    const impulse = this.impulse(3.4, 2.6);
-    this.musicVerb = ctx.createConvolver();
-    this.musicVerb.buffer = impulse;
-    this.musicVerb.connect(this.musicBus);
-    this.sfxVerb = ctx.createConvolver();
-    this.sfxVerb.buffer = impulse;
-    this.sfxVerb.connect(this.sfxBus);
-
-    this.noise = this.noiseBuffer(2);
-    this.applyVolumes(true);
-    this.startMusic();
-
-    document.addEventListener('visibilitychange', () => {
-      if (!this.ctx) return;
-      if (document.visibilityState === 'hidden') this.ctx.suspend();
-      else this.ctx.resume();
-    });
-    ctx.resume().then(() => this.changed());
+    ctx.onstatechange = () => this.onStateChange(ctx);
+    this.resume(); // must happen inside the gesture
+    // Building the reverb takes a moment; do it after this gesture, so the
+    // game's own handling of the tap (joining, starting a stage) goes first.
+    setTimeout(() => this.build(ctx), 0);
     this.changed();
+  }
+
+  build(ctx) {
+    if (this.ctx !== ctx || this.ready) return;
+    try {
+      this.master = ctx.createGain();
+      this.duck = ctx.createGain(); // fades for tab visibility, apart from the player's volume
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -16;
+      comp.ratio.value = 3;
+      this.master.connect(this.duck).connect(comp).connect(ctx.destination);
+      if (document.visibilityState === 'hidden') this.duck.gain.value = 0;
+
+      this.musicBus = ctx.createGain();
+      this.sfxBus = ctx.createGain();
+      this.musicBus.connect(this.master);
+      this.sfxBus.connect(this.master);
+
+      const impulse = this.impulse(3.4, 2.6);
+      this.musicVerb = ctx.createConvolver();
+      this.musicVerb.buffer = impulse;
+      this.musicVerb.connect(this.musicBus);
+      this.sfxVerb = ctx.createConvolver();
+      this.sfxVerb.buffer = impulse;
+      this.sfxVerb.connect(this.sfxBus);
+
+      this.noise = this.noiseBuffer(2);
+      this.ready = true;
+      this.applyVolumes(true);
+      this.startMusic();
+    } catch {
+      this.fail();
+      return;
+    }
+    this.changed();
+  }
+
+  /** Sound cannot work in this browser: stop trying, and let the game carry on silently. */
+  fail() {
+    this.failed = true;
+    this.teardown();
+    this.changed();
+  }
+
+  teardown() {
+    clearInterval(this.scheduler);
+    clearTimeout(this.suspendTimer);
+    this.scheduler = null;
+    this.suspendTimer = null;
+    const ctx = this.ctx;
+    this.ctx = null;
+    this.ready = false;
+    this.channels.clear();
+    try {
+      Promise.resolve(ctx?.close()).catch(() => {});
+    } catch {
+      // already closed
+    }
+  }
+
+  resume() {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state === 'running' || ctx.state === 'closed' || document.visibilityState === 'hidden') return;
+    clearTimeout(this.suspendTimer);
+    this.suspendTimer = null;
+    let pending;
+    try {
+      pending = ctx.resume();
+    } catch {
+      return;
+    }
+    Promise.resolve(pending).then(
+      () => {
+        if (this.ctx !== ctx) return;
+        this.fadeTo(1);
+        this.changed();
+      },
+      () => {
+        // Not allowed yet; the next gesture tries again.
+      },
+    );
+  }
+
+  onStateChange(ctx) {
+    if (this.ctx !== ctx) return;
+    if (ctx.state === 'closed') {
+      // Something closed it under us; the next gesture starts afresh.
+      this.teardown();
+    } else if (ctx.state !== 'running' && document.visibilityState === 'visible' && !this.suspendTimer && Date.now() - this.lastAutoResume > AUTO_RESUME_MS) {
+      // The browser stopped sound by itself (a call, another app): try again
+      // now. If that is refused, the next tap or key press resumes it.
+      this.lastAutoResume = Date.now();
+      this.resume();
+    }
+    this.changed();
+  }
+
+  onVisibility() {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    clearTimeout(this.suspendTimer);
+    this.suspendTimer = null;
+    if (document.visibilityState !== 'hidden') {
+      this.resume();
+      this.fadeTo(1);
+      return;
+    }
+    // Fade out, then pause everything while nobody can hear it.
+    this.fadeTo(0);
+    this.suspendTimer = setTimeout(() => {
+      this.suspendTimer = null;
+      if (this.ctx !== ctx || document.visibilityState !== 'hidden' || ctx.state !== 'running') return;
+      try {
+        Promise.resolve(ctx.suspend()).catch(() => {});
+      } catch {
+        // already stopped
+      }
+    }, 120);
+  }
+
+  fadeTo(level) {
+    this.guard(() => this.duck.gain.setTargetAtTime(level, this.ctx.currentTime, FADE));
+  }
+
+  /** Runs a change to the sound graph only once it exists, and never lets it throw. */
+  guard(fn) {
+    if (!this.ready) return;
+    try {
+      fn();
+    } catch {
+      // A sound that cannot be changed is left as it is.
+    }
   }
 
   // ---- Volume -------------------------------------------------------------
@@ -94,13 +264,14 @@ export class AudioEngine {
   }
 
   applyVolumes(immediate = false) {
-    if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    const curve = (v) => Math.max(0, Math.min(1, v)) ** 2;
-    const set = (param, value) => (immediate ? param.setValueAtTime(value, t) : param.setTargetAtTime(value, t, 0.05));
-    set(this.master.gain, this.prefs.muted ? 0 : curve(this.prefs.master) * 1.4);
-    set(this.musicBus.gain, curve(this.prefs.music));
-    set(this.sfxBus.gain, curve(this.prefs.sfx));
+    this.guard(() => {
+      const t = this.ctx.currentTime;
+      const curve = (v) => Math.max(0, Math.min(1, v)) ** 2;
+      const set = (param, value) => (immediate ? param.setValueAtTime(value, t) : param.setTargetAtTime(value, t, 0.05));
+      set(this.master.gain, this.prefs.muted ? 0 : curve(this.prefs.master) * 1.4);
+      set(this.musicBus.gain, curve(this.prefs.music));
+      set(this.sfxBus.gain, curve(this.prefs.sfx));
+    });
   }
 
   // ---- Building blocks ----------------------------------------------------
@@ -188,12 +359,54 @@ export class AudioEngine {
   }
 
   route(node, bus, verb) {
-    node.connect(bus === 'music' ? this.musicBus : this.sfxBus);
+    const music = bus === 'music';
+    const fx = music ? null : this.fx || this.channel(SCENE);
+    node.connect(music ? this.musicBus : fx.out);
     if (verb > 0) {
       const send = this.ctx.createGain();
       send.gain.value = verb;
-      node.connect(send).connect(bus === 'music' ? this.musicVerb : this.sfxVerb);
+      node.connect(send).connect(music ? this.musicVerb : fx.verb);
     }
+  }
+
+  /** A channel for sound effects, with its own reverb send, so it can be silenced as a whole. */
+  channel(name) {
+    let ch = this.channels.get(name);
+    if (!ch) {
+      ch = { out: this.ctx.createGain(), verb: this.ctx.createGain() };
+      ch.out.connect(this.sfxBus);
+      ch.verb.connect(this.sfxVerb);
+      this.channels.set(name, ch);
+    }
+    return ch;
+  }
+
+  /** Silences a channel's sounds, including those still scheduled to play. */
+  stop(name) {
+    const ch = this.channels.get(name);
+    if (!ch) return;
+    this.channels.delete(name);
+    this.guard(() => {
+      const t = this.ctx.currentTime;
+      for (const node of [ch.out, ch.verb]) {
+        node.gain.cancelScheduledValues(t);
+        node.gain.setValueAtTime(1, t);
+        node.gain.linearRampToValueAtTime(0, t + 0.04);
+      }
+      setTimeout(() => {
+        try {
+          ch.out.disconnect();
+          ch.verb.disconnect();
+        } catch {
+          // already gone
+        }
+      }, 250);
+    });
+  }
+
+  /** Silences every sound effect, playing or scheduled, e.g. on leaving a room. Music carries on. */
+  stopEffects() {
+    for (const name of [...this.channels.keys()]) this.stop(name);
   }
 
   // ---- Music ----------------------------------------------------------------
@@ -201,14 +414,16 @@ export class AudioEngine {
   startMusic() {
     const ctx = this.ctx;
     const t = ctx.currentTime;
+    // Start in whatever mood the game is already in: the first gesture may come mid-stage.
+    const mood = MOODS[this.mood];
 
     this.padFilter = ctx.createBiquadFilter();
     this.padFilter.type = 'lowpass';
-    this.padFilter.frequency.value = MOODS.menu.filter;
+    this.padFilter.frequency.value = mood.filter + (this.mood === 'game' ? 500 * this.filterIntensity : 0);
     this.padFilter.Q.value = 2;
     this.padGain = ctx.createGain();
     this.padGain.gain.setValueAtTime(0.0001, t);
-    this.padGain.gain.exponentialRampToValueAtTime(MOODS.menu.pad, t + 4);
+    this.padGain.gain.setTargetAtTime(mood.pad, t, 1.2);
     this.padFilter.connect(this.padGain);
     this.route(this.padGain, 'music', 0.7);
 
@@ -261,17 +476,28 @@ export class AudioEngine {
     hiss.start();
 
     this.chordIndex = 0;
+    if (this.mood === 'won') this.setChord(WON_CHORD, 3);
+    if (this.mood === 'lost') this.setChord(CHORDS[2].map((n) => n - 1), 4);
     const now = ctx.currentTime;
     this.next = { chord: now + 14, bell: now + 3, clank: now + 9, crackle: now + 1, beat: now + 1 };
+    clearInterval(this.scheduler);
     this.scheduler = setInterval(() => this.tick(), 200);
   }
 
   tick() {
     const ctx = this.ctx;
-    if (!ctx || ctx.state !== 'running') return;
-    const now = ctx.currentTime;
+    if (!this.ready || ctx.state !== 'running') return;
+    try {
+      this.scheduleMusic(ctx.currentTime);
+    } catch {
+      // Skip this beat; the next tick tries again.
+    }
+  }
+
+  scheduleMusic(now) {
     const mood = MOODS[this.mood];
     const rand = ([lo, hi]) => lo + Math.random() * (hi - lo);
+    const at = LOOKAHEAD;
 
     if (now >= this.next.chord && this.mood !== 'won') {
       this.chordIndex = (this.chordIndex + 1) % CHORDS.length;
@@ -280,24 +506,24 @@ export class AudioEngine {
     }
     if (now >= this.next.bell) {
       const note = BELL_NOTES[Math.floor(Math.random() * BELL_NOTES.length)] - (this.mood === 'lost' ? 12 : 0);
-      this.bell({ freq: midi(note), gain: 0.028 + Math.random() * 0.02 });
+      this.bell({ freq: midi(note), gain: 0.028 + Math.random() * 0.02, at });
       this.next.bell = now + rand(mood.bells);
     }
     if (now >= this.next.clank) {
       // Something heavy shifts somewhere in the building.
-      this.burst({ bus: 'music', dur: 0.5, gain: 0.08, freq: 300 + Math.random() * 500, q: 9, verb: 1.2 });
-      this.tone({ bus: 'music', freq: 140 + Math.random() * 60, type: 'triangle', dur: 1.4, gain: 0.03, verb: 1 });
+      this.burst({ bus: 'music', dur: 0.5, gain: 0.08, freq: 300 + Math.random() * 500, q: 9, verb: 1.2, at });
+      this.tone({ bus: 'music', freq: 140 + Math.random() * 60, type: 'triangle', dur: 1.4, gain: 0.03, verb: 1, at });
       this.next.clank = now + rand(mood.clanks);
     }
     if (now >= this.next.crackle) {
-      this.burst({ bus: 'music', dur: 0.012, gain: 0.04 + Math.random() * 0.05, type: 'highpass', freq: 2500 });
+      this.burst({ bus: 'music', dur: 0.012, gain: 0.04 + Math.random() * 0.05, type: 'highpass', freq: 2500, at });
       this.next.crackle = now + 0.3 + Math.random() * 2.5;
     }
     if (this.intensity > 0.05 && now >= this.next.beat) {
       // A heartbeat that quickens as the clock runs down.
       const g = 0.05 + 0.12 * this.intensity;
-      this.tone({ bus: 'music', freq: 62, glideTo: 40, dur: 0.18, gain: g });
-      this.tone({ bus: 'music', freq: 58, glideTo: 38, dur: 0.16, gain: g * 0.7, at: 0.22 });
+      this.tone({ bus: 'music', freq: 62, glideTo: 40, dur: 0.18, gain: g, at });
+      this.tone({ bus: 'music', freq: 58, glideTo: 38, dur: 0.16, gain: g * 0.7, at: at + 0.22 });
       this.next.beat = now + 1.2 - 0.5 * this.intensity;
     }
   }
@@ -312,28 +538,49 @@ export class AudioEngine {
   setMood(mood) {
     if (!MOODS[mood] || mood === this.mood) return;
     this.mood = mood;
-    if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    const m = MOODS[mood];
-    this.padFilter.frequency.setTargetAtTime(m.filter, t, 1.5);
-    this.padGain.gain.setTargetAtTime(m.pad, t, 1.5);
-    if (mood === 'won') this.setChord(WON_CHORD, 3);
-    if (mood === 'lost') this.setChord(CHORDS[2].map((n) => n - 1), 4);
     if (mood !== 'game') this.setIntensity(0);
-    this.next.bell = t + 1.5;
+    this.guard(() => {
+      const t = this.ctx.currentTime;
+      const m = MOODS[mood];
+      this.padFilter.frequency.setTargetAtTime(m.filter + (mood === 'game' ? 500 * this.filterIntensity : 0), t, 1.5);
+      this.padGain.gain.setTargetAtTime(m.pad, t, 1.5);
+      if (mood === 'won') this.setChord(WON_CHORD, 3);
+      if (mood === 'lost') this.setChord(CHORDS[2].map((n) => n - 1), 4);
+      this.next.bell = t + 1.5;
+    });
   }
 
   setIntensity(value) {
-    this.intensity = Math.max(0, Math.min(1, value));
-    if (this.ctx && this.mood === 'game') {
-      this.padFilter.frequency.setTargetAtTime(MOODS.game.filter + 500 * this.intensity, this.ctx.currentTime, 2);
-    }
+    this.intensity = Math.max(0, Math.min(1, Number(value) || 0));
+    // The stage clock calls this four times a second; move the filter only in
+    // twentieths, so its automation stays a handful of events per stage.
+    const stepped = Math.round(this.intensity * 20) / 20;
+    if (stepped === this.filterIntensity) return;
+    this.filterIntensity = stepped;
+    if (this.mood !== 'game') return;
+    this.guard(() => this.padFilter.frequency.setTargetAtTime(MOODS.game.filter + 500 * stepped, this.ctx.currentTime, 2));
   }
 
   // ---- Effects --------------------------------------------------------------
 
+  /**
+   * Plays a sound effect. With `opt.channel`, it replaces whatever was playing
+   * on that channel (a ring that is replayed never overlaps the last one).
+   */
   play(name, opt = {}) {
-    if (!this.ctx || this.ctx.state !== 'running') return;
+    if (!this.unlocked) return;
+    try {
+      if (opt.channel) this.stop(opt.channel);
+      this.fx = this.channel(opt.channel || SCENE);
+      this.effect(name, opt);
+    } catch {
+      // A sound that cannot play is skipped; the game carries on.
+    } finally {
+      this.fx = null;
+    }
+  }
+
+  effect(name, opt) {
     switch (name) {
       case 'click':
         this.tone({ freq: 1700, type: 'square', dur: 0.03, gain: 0.025 });
@@ -432,7 +679,7 @@ export class AudioEngine {
         [45, 52, 57].forEach((n) => this.tone({ freq: midi(n), type: 'triangle', dur: 2.6, gain: 0.035, attack: 0.4, at: 0.3, verb: 0.8 }));
         break;
       case 'win':
-        this.play('success');
+        this.effect('success', opt);
         [57, 61, 64].forEach((n) => this.tone({ freq: midi(n), type: 'triangle', dur: 4, gain: 0.04, attack: 0.8, at: 0.5, verb: 0.8 }));
         break;
       case 'lose':
