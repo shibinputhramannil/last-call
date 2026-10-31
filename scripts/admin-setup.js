@@ -12,7 +12,7 @@
 // Non-interactive use: pipe two lines, the username then the password.
 
 import { createInterface } from 'node:readline';
-import { hashPassword, newTotpSecret, otpauthUri, totpCode, base32Decode, TOTP_STEP_MS } from '../server/auth.js';
+import { hashPassword, newTotpSecret, otpauthUri, totpCode, base32Decode, MIN_PASSWORD_LENGTH, TOTP_STEP_MS } from '../server/auth.js';
 
 const tty = process.stdin.isTTY;
 
@@ -48,7 +48,7 @@ if (!tty) {
 try {
   const username = (await ask(rl, 'Admin username: ')).trim();
   if (!/^[A-Za-z0-9._@-]{3,64}$/.test(username)) throw new Error('use 3 to 64 letters, digits, dots, dashes, underscores or @');
-  const password = await ask(rl, 'Password (at least 12 characters): ', { hidden: true });
+  const password = await ask(rl, `Password (at least ${MIN_PASSWORD_LENGTH} characters): `, { hidden: true });
   if (tty) {
     const again = await ask(rl, 'Type the password again: ', { hidden: true });
     if (again !== password) throw new Error('the passwords did not match');

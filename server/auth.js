@@ -7,10 +7,14 @@ import { promisify } from 'node:util';
 const scrypt = promisify(scryptCallback);
 const SCRYPT = { N: 2 ** 15, r: 8, p: 1, keylen: 32 };
 const MAX_N = 2 ** 17;
+/** Shortest admin password accepted, both when setting it up and at sign-in. */
+export const MIN_PASSWORD_LENGTH = 8;
 
 /** "scrypt$N$r$p$salt$hash" (salt and hash in base64url). */
 export async function hashPassword(password, { N = SCRYPT.N, r = SCRYPT.r, p = SCRYPT.p } = {}) {
-  if (typeof password !== 'string' || password.length < 12) throw new Error('use a password of at least 12 characters');
+  if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
+    throw new Error(`use a password of at least ${MIN_PASSWORD_LENGTH} characters`);
+  }
   const salt = randomBytes(16);
   const hash = await scrypt(password.normalize('NFKC'), salt, SCRYPT.keylen, { N, r, p, maxmem: 128 * N * r * 2 });
   return ['scrypt', N, r, p, salt.toString('base64url'), hash.toString('base64url')].join('$');

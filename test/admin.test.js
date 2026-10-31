@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomBytes, scryptSync } from 'node:crypto';
 import WebSocket from 'ws';
 import { createAnalytics } from '../server/analytics.js';
 import { createApp } from '../server/app.js';
-import { base32Decode, hashPassword, newTotpSecret, totpCode, TOTP_STEP_MS, verifyPassword, verifyTotp } from '../server/auth.js';
+import { base32Decode, hashPassword, MIN_PASSWORD_LENGTH, newTotpSecret, totpCode, TOTP_STEP_MS, verifyPassword, verifyTotp } from '../server/auth.js';
 import { COOKIE, truncateIp } from '../server/admin.js';
 import { silentLogger } from '../server/logger.js';
 import { PUZZLES } from '../server/puzzles/index.js';
@@ -68,7 +69,11 @@ test('passwords are hashed with scrypt and checked in constant time; TOTP codes 
   assert.equal(await verifyPassword(PASSWORD, HASH), true);
   assert.equal(await verifyPassword(`${PASSWORD}x`, HASH), false);
   assert.equal(await verifyPassword(PASSWORD, 'scrypt$2$1$1$x$y'), false, 'weak or malformed hashes are refused');
-  await assert.rejects(hashPassword('short'));
+  assert.equal(MIN_PASSWORD_LENGTH, 8);
+  await assert.rejects(hashPassword('7-chars'), /at least 8 characters/);
+  const eight = await hashPassword('8-chars!', { N: 2 ** 14 });
+  assert.match(eight, /^scrypt\$16384\$8\$1\$/, 'an 8-character password is accepted and hashed with scrypt');
+  assert.equal(await verifyPassword('8-chars!', eight), true);
   // RFC 6238 test vector (SHA-1, T = 59 s).
   const rfcKey = Buffer.from('12345678901234567890');
   assert.equal(totpCode(rfcKey, 1), '287082');
@@ -96,6 +101,37 @@ test('without an admin account configured, /admin does not exist', async () => {
     assert.equal((await get(noMfa, '/admin')).status, 404, 'MFA is required unless explicitly turned off');
   } finally {
     await noMfa.stop();
+  }
+});
+
+/** An scrypt hash made without hashPassword's length rule, as a hand-provisioned one might be. */
+function handMadeHash(password) {
+  const salt = randomBytes(16);
+  const hash = scryptSync(password, salt, 32, { N: 2 ** 14, r: 8, p: 1 });
+  return ['scrypt', 2 ** 14, 8, 1, salt.toString('base64url'), hash.toString('base64url')].join('$');
+}
+
+test('an 8-character password signs in; a shorter one is refused at sign-in even with a matching hash', async () => {
+  const eight = 'Ab3$kQ9z';
+  const ok = await start('sqlite', { admin: { ...adminConfig, passwordHash: await hashPassword(eight, { N: 2 ** 14 }) } });
+  try {
+    ok.clock.t += TOTP_STEP_MS;
+    assert.equal((await login(ok, { password: eight })).status, 200);
+  } finally {
+    await ok.stop();
+  }
+
+  const seven = 'Ab3$kQ9';
+  const passwordHash = handMadeHash(seven);
+  assert.equal(await verifyPassword(seven, passwordHash), true, 'the hash itself matches');
+  const short = await start('sqlite', { admin: { ...adminConfig, passwordHash } });
+  try {
+    short.clock.t += TOTP_STEP_MS;
+    const res = await login(short, { password: seven });
+    assert.equal(res.status, 401);
+    assert.match((await res.json()).message, /Sign-in failed/, 'the same answer as any wrong password');
+  } finally {
+    await short.stop();
   }
 });
 

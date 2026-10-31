@@ -257,7 +257,7 @@ There is one account, and it is defined by three server environment variables. N
    npm run admin:setup
    ```
 
-   Choose a username, then type a password (at least 12 characters; it isn't shown or saved). The command prints three values: `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH` (an scrypt hash, not the password), and `ADMIN_TOTP_SECRET`.
+   Choose a username, then type a password (at least 8 characters; it isn't shown or saved). The command prints three values: `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH` (an scrypt hash, not the password), and `ADMIN_TOTP_SECRET`.
 2. Add the one-time-code key it shows to an authenticator app (1Password, Google Authenticator, Authy, Aegis, Microsoft Authenticator). Type the app's current code when the command asks, to check it works.
 3. Put the three values into the server's environment. On Render: the service's **Environment** tab, **Add Environment Variable**, then **Save** (this redeploys). Locally: a `.env` file. Treat all three as secrets. In a shell, wrap the hash in single quotes, because it contains `$`.
 4. Open `https://<your-address>/admin` and sign in with the username, the password and the app's current code.

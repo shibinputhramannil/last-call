@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { silentLogger } from './logger.js';
 import { RateLimiter } from './rateLimit.js';
-import { safeEqual, verifyPassword, verifyTotp } from './auth.js';
+import { MIN_PASSWORD_LENGTH, safeEqual, verifyPassword, verifyTotp } from './auth.js';
 import { securityHeaders } from './static.js';
 
 // The private Superadmin dashboard at /admin.
@@ -214,7 +214,8 @@ export function createAdmin({
     const code = typeof body?.code === 'string' ? body.code.replace(/\s/g, '').slice(0, 6) : '';
 
     const userOk = safeEqual(username, admin.username);
-    const passOk = await verifyPassword(password, userOk ? admin.passwordHash : DUMMY_HASH);
+    // The length rule is checked after scrypt, so a short password costs the same time as a wrong one.
+    const passOk = (await verifyPassword(password, userOk ? admin.passwordHash : DUMMY_HASH)) && password.length >= MIN_PASSWORD_LENGTH;
     let mfaOk = true;
     let step = null;
     if (admin.mfa !== 'off') {
