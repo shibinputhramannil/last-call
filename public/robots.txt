@@ -1,0 +1,5 @@
+# Last Call asks search engines not to list it with a "noindex" tag on every
+# page and an X-Robots-Tag header. Crawlers must be allowed in to see that tag,
+# so nothing is disallowed here. This file is not a privacy or security control.
+User-agent: *
+Allow: /

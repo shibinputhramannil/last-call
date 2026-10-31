@@ -5,18 +5,22 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { formatRoomCode, normalizeRoomCode, roomCodeProblem, ROLES, MODES } from '../shared/constants.js';
+import { createAdmin } from './admin.js';
 import { createLogger } from './logger.js';
 import { RateLimiter } from './rateLimit.js';
 import { RoomManager } from './rooms.js';
 import { createSigner } from './signing.js';
 import { createStaticHandler, securityHeaders } from './static.js';
 import { createStore, resolveSecret } from './store.js';
+import { validateMessage, validateRoomBody } from './validate.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const INDEX_FILE = path.join(ROOT, 'public', 'index.html');
 /** Room requests carry the browser's signed campaign progress, a few KB at most. */
 const MAX_BODY = 16 * 1024;
 const MAX_WS_PER_IP = 12;
+/** Failed seat attempts (wrong token or room) allowed per IP before connections are refused for a while. */
+const MAX_FAILED_ATTACH = 20;
 const HELLO_TIMEOUT_MS = 10_000;
 const HEARTBEAT_MS = 25_000;
 /**
@@ -57,14 +61,16 @@ export function createApp(
     log = createLogger('info'),
     store = createStore({ dataDir: config.dataDir, log }),
     signer = createSigner(resolveSecret({ secret: config.saveSecret, dataDir: config.dataDir }).secret),
+    db = null,
+    analytics = null,
+    adminOptions = {},
     heartbeatMs = HEARTBEAT_MS,
     silenceLimitMs = SILENCE_LIMIT_MS,
   } = {},
 ) {
-  const startedAt = Date.now();
   let draining = false;
   let shutdownPromise = null;
-  const rooms = new RoomManager({ idleMs: config.roomIdleMs, maxMs: config.roomMaxMs, narrator, signer, store, log });
+  const rooms = new RoomManager({ idleMs: config.roomIdleMs, maxMs: config.roomMaxMs, narrator, signer, store, analytics, log });
   rooms.restore();
   const serveStatic = createStaticHandler({
     '/shared/': path.join(ROOT, 'shared'),
@@ -75,6 +81,7 @@ export function createApp(
     create: new RateLimiter({ capacity: 8, perMs: 10 * 60_000 }),
     lookup: new RateLimiter({ capacity: 40, perMs: 5 * 60_000 }),
     connect: new RateLimiter({ capacity: 30, perMs: 60_000 }),
+    attach: new RateLimiter({ capacity: MAX_FAILED_ATTACH, perMs: 10 * 60_000 }),
   };
   const socketsPerIp = new Map();
 
@@ -95,6 +102,9 @@ export function createApp(
     }
     return req.socket.remoteAddress || 'unknown';
   }
+
+  // The private admin dashboard needs the database; without one, /admin is a 404.
+  const admin = db && analytics ? createAdmin({ admin: config.admin, db, analytics, rooms, clientIp, publicUrl: config.publicUrl, log, ...adminOptions }) : null;
 
   function isHttps(req) {
     if (req.socket.encrypted) return true;
@@ -183,9 +193,10 @@ export function createApp(
       } catch {
         return sendJson(req, res, 400, { error: 'BAD_REQUEST', message: 'The request could not be read.' });
       }
-      const role = ROLES.includes(body.role) ? body.role : 'caller';
-      const mode = MODES.includes(body.mode) ? body.mode : 'timed';
-      const result = rooms.create({ name: body.name, role, mode, progress: body.progress });
+      const clean = validateRoomBody(body);
+      const role = ROLES.includes(clean.role) ? clean.role : 'caller';
+      const mode = MODES.includes(clean.mode) ? clean.mode : 'timed';
+      const result = rooms.create({ name: clean.name, role, mode, progress: clean.progress });
       if (result.error) return sendJson(req, res, result.error === 'BUSY' ? 503 : 400, result);
       return sendJson(req, res, 201, { code: result.room.code, token: result.seat.token, role: result.seat.role });
     }
@@ -207,7 +218,8 @@ export function createApp(
         } catch {
           return sendJson(req, res, 400, { error: 'BAD_REQUEST', message: 'The request could not be read.' });
         }
-        const result = rooms.join(code, { name: body.name, progress: body.progress });
+        const clean = validateRoomBody(body);
+        const result = rooms.join(code, { name: clean.name, progress: clean.progress });
         if (result.error === 'EXPIRED') return sendJson(req, res, 410, { error: 'EXPIRED', message: result.message });
         if (result.error) {
           const [status, message] = joinErrors[result.error];
@@ -219,11 +231,13 @@ export function createApp(
     return sendJson(req, res, 404, { error: 'NOT_FOUND', message: 'Unknown endpoint.' });
   }
 
-  /** Liveness and readiness for the host's load balancer. 503 while draining. */
+  /**
+   * Liveness and readiness for the host's load balancer: 200 or 503 while
+   * draining, and nothing else. Player counts and history are only in the
+   * signed-in admin dashboard.
+   */
   function health() {
-    if (draining) return [503, { status: 'draining' }];
-    const { rooms: roomCount, players } = rooms.stats();
-    return [200, { status: 'ok', uptimeSeconds: Math.round((Date.now() - startedAt) / 1000), rooms: roomCount, players }];
+    return draining ? [503, { status: 'draining' }] : [200, { status: 'ok' }];
   }
 
   // The page itself carries share-preview tags with absolute URLs, so link
@@ -244,8 +258,12 @@ export function createApp(
       SHARE_URL: room ? `${origin}/?room=${room}` : `${origin}/`,
       SHARE_TITLE: room ? SHARE.inviteTitle(room) : SHARE.title,
       SHARE_DESCRIPTION: room ? SHARE.inviteDescription : SHARE.description,
+      SITE_VERIFICATION: config.googleSiteVerification || '',
     };
-    const body = (await indexTemplate()).replace(/\{\{([A-Z_]+)\}\}/g, (_, key) => escapeHtml(values[key] ?? ''));
+    let template = await indexTemplate();
+    // The Search Console verification tag appears only when it is configured.
+    if (!values.SITE_VERIFICATION) template = template.replace(/^.*\{\{SITE_VERIFICATION\}\}.*\r?\n/m, '');
+    const body = template.replace(/\{\{([A-Z_]+)\}\}/g, (_, key) => escapeHtml(values[key] ?? ''));
     const etag = `W/"${createHash('sha1').update(body).digest('base64url').slice(0, 20)}"`;
     const headers = { ...securityHeaders(req), 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', ETag: etag };
     if (req.headers['if-none-match'] === etag) {
@@ -271,6 +289,7 @@ export function createApp(
         return sendJson(req, res, status, body);
       }
       if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
+      if (admin && (await admin.handle(req, res, url))) return;
       if ((url.pathname === '/' || url.pathname === '/index.html') && (req.method === 'GET' || req.method === 'HEAD')) {
         return await serveIndex(req, res, url);
       }
@@ -329,11 +348,11 @@ export function createApp(
         if (n <= 0) socketsPerIp.delete(ip);
         else socketsPerIp.set(ip, n);
       });
-      onConnection(ws);
+      onConnection(ws, ip);
     });
   });
 
-  function onConnection(ws) {
+  function onConnection(ws, ip) {
     let room = null;
     let seat = null;
     const messageLimiter = new RateLimiter({ capacity: 40, perMs: 10_000 });
@@ -365,22 +384,32 @@ export function createApp(
         if (++strikes > 20) closeWith('FLOOD', 'Too many messages. Reconnecting will fix this.', 4008);
         return;
       }
-      let msg;
+      let parsed;
       try {
-        msg = JSON.parse(data.toString('utf8'));
+        parsed = JSON.parse(data.toString('utf8'));
       } catch {
         return;
       }
-      if (!msg || typeof msg !== 'object' || typeof msg.t !== 'string') return;
+      const msg = validateMessage(parsed);
+      if (!msg) {
+        if (!seat && parsed?.t === 'hello') return closeWith('ROOM_NOT_FOUND', 'That room link is not valid. Ask your friend for a new one.', 4004);
+        if (++strikes > 20) return closeWith('FLOOD', 'Too many malformed messages. Reconnecting will fix this.', 4008);
+        if (seat) rooms.notice(room, seat, 'BAD_REQUEST', 'The exchange did not understand that request.');
+        return;
+      }
 
       if (!seat) {
         if (msg.t !== 'hello') return;
         const code = normalizeRoomCode(msg.code);
-        if (roomCodeProblem(code) || typeof msg.token !== 'string') {
-          return closeWith('ROOM_NOT_FOUND', 'That room code is not valid.', 4004);
+        if (roomCodeProblem(code)) return closeWith('ROOM_NOT_FOUND', 'That room code is not valid.', 4004);
+        if (limits.attach.peek(ip)) {
+          return closeWith('RATE_LIMITED', 'Too many attempts to join with the wrong details. Wait a few minutes, then try again.', 4029);
         }
-        const result = rooms.attach(code, msg.token, ws, { ticket: msg.ticket, progress: msg.progress });
-        if (result.error) return closeWith(result.error, result.message, 4004);
+        const result = rooms.attach(code, msg.token, ws, { ticket: msg.ticket, progress: msg.progress, sid: msg.sid });
+        if (result.error) {
+          limits.attach.take(ip);
+          return closeWith(result.error, result.message, 4004);
+        }
         clearTimeout(helloTimer);
         room = result.room;
         seat = result.seat;
@@ -420,12 +449,23 @@ export function createApp(
   }, heartbeatMs);
 
   const sweeper = setInterval(() => rooms.sweep(), 1_000);
+  const recorder = setInterval(() => analytics?.flush(), 5_000);
+  const housekeeping = setInterval(async () => {
+    try {
+      await analytics?.maintain();
+      await admin?.maintain();
+    } catch (err) {
+      log.warn('statistics housekeeping failed; will retry', { err: err.message });
+    }
+  }, 60 * 60_000);
   const pruner = setInterval(() => {
     for (const limiter of Object.values(limits)) limiter.prune();
   }, 5 * 60_000);
   heartbeat.unref();
   sweeper.unref();
   pruner.unref();
+  recorder.unref();
+  housekeeping.unref();
 
   /**
    * Graceful shutdown: stop taking new rooms and connections, save every room,
@@ -439,7 +479,10 @@ export function createApp(
       clearInterval(heartbeat);
       clearInterval(sweeper);
       clearInterval(pruner);
+      clearInterval(recorder);
+      clearInterval(housekeeping);
       rooms.shutdown();
+      await analytics?.flush();
       if (flushMs > 0) await new Promise((resolve) => setTimeout(resolve, flushMs));
       for (const ws of wss.clients) ws.terminate();
       await new Promise((resolve) => {
@@ -456,5 +499,5 @@ export function createApp(
     return shutdownPromise;
   }
 
-  return { server, rooms, shutdown, close: () => shutdown({ flushMs: 0 }), isDraining: () => draining };
+  return { server, rooms, admin, shutdown, close: () => shutdown({ flushMs: 0 }), isDraining: () => draining };
 }

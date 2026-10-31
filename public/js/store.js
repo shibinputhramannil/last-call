@@ -100,6 +100,25 @@ export function saveProgress(token, campaign) {
   });
 }
 
+/**
+ * A random id for this tab's browser session, used only for anonymous play
+ * statistics. It lives in sessionStorage, so it ends when the tab closes, and
+ * the server stores only a keyed hash of it.
+ */
+export function browserSessionId() {
+  try {
+    let id = sessionStorage.getItem('lastcall:sid');
+    if (!id || !/^[A-Za-z0-9_-]{16,64}$/.test(id)) {
+      const bytes = crypto.getRandomValues(new Uint8Array(16));
+      id = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      sessionStorage.setItem('lastcall:sid', id);
+    }
+    return id;
+  } catch {
+    return null;
+  }
+}
+
 export const openingSeen = () => read(localStorage, OPENING_KEY, false) === true;
 export const markOpeningSeen = () => write(localStorage, OPENING_KEY, true);
 

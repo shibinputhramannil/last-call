@@ -14,6 +14,9 @@ Exchange 7 closed in 1963, and tonight one of its lines rang anyway. **The Calle
 - Progress is saved in both players' browsers, signed by the server, so it survives server restarts
 - Settings for sound, music, motion, text size, contrast and the manual's typewriter font
 - Keyboard and screen reader support, fits phones and desktops
+- A private, two-factor Superadmin dashboard with live and historical play statistics (anonymous, no chat or names)
+
+Security notes and the threat model are in [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Run it on your computer
 
@@ -183,7 +186,7 @@ Static hosts (GitHub Pages, plain Netlify or Vercel sites) and serverless functi
 
 ### Health check and shutdown
 
-- **Health check.** `GET /healthz` (or `HEAD`) returns `200` with `{"status":"ok","uptimeSeconds":…,"rooms":…,"players":…}`. Use `players` to see whether anyone is mid-game before you redeploy.
+- **Health check.** `GET /healthz` (or `HEAD`) returns `200` with `{"status":"ok"}`, and nothing else: player counts and history are only in the [admin dashboard](#admin-dashboard). Check "Players connected now" there before you redeploy.
 - **Shutdown.** On `SIGTERM` (sent by hosts before stopping or replacing the server) or Ctrl+C, the server:
   1. switches to draining: `/healthz` returns `503`, and new rooms, joins and connections are refused with "the server is restarting";
   2. pauses every stage clock and saves every room (with `DATA_DIR`);
@@ -208,7 +211,7 @@ The server writes one line per event to standard output, for example:
 
 ### Redeploying
 
-- **Normal path:** push to `main`. GitHub Actions runs the lint and tests, and Render deploys only once they pass. Players in a game see "restarting" and reconnect; see [Persistence](#persistence) for what they keep.
+- **Normal path:** push to `main`. GitHub Actions runs the lint and tests, and Render deploys only once they pass. Players in a game see "restarting" and reconnect; see [Persistence](#persistence) for what they keep. The admin dashboard shows whether anyone is playing.
 - **Manually:** on the Render service page, choose **Manual Deploy > Deploy latest commit**.
 - **To roll back:** open **Events** and choose **Rollback** on an earlier deploy.
 - **To change settings:** use the service's **Environment** tab. Saving redeploys the service.
@@ -240,6 +243,137 @@ location / {
 }
 ```
 
+## Admin dashboard
+
+A private dashboard at `/admin` shows how the game is being played. It is **off until you set it up**: without an admin account, `/admin` returns "Not found".
+
+### Set up the Superadmin (once)
+
+There is one account, and it is defined by three server environment variables. Nothing is created through the website.
+
+1. On your own computer, in this folder, run:
+
+   ```bash
+   npm run admin:setup
+   ```
+
+   Choose a username, then type a password (at least 12 characters; it isn't shown or saved). The command prints three values: `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH` (an scrypt hash, not the password), and `ADMIN_TOTP_SECRET`.
+2. Add the one-time-code key it shows to an authenticator app (1Password, Google Authenticator, Authy, Aegis, Microsoft Authenticator). Type the app's current code when the command asks, to check it works.
+3. Put the three values into the server's environment. On Render: the service's **Environment** tab, **Add Environment Variable**, then **Save** (this redeploys). Locally: a `.env` file. Treat all three as secrets. In a shell, wrap the hash in single quotes, because it contains `$`.
+4. Open `https://<your-address>/admin` and sign in with the username, the password and the app's current code.
+
+Keep the password in a password manager and back up the authenticator key. If either is lost, run the setup again and replace the variables; every existing admin session then stops working.
+
+A one-time code is required unless you set `ADMIN_MFA=off`, which is not recommended; the server warns about it in its log.
+
+### Database
+
+Statistics history and admin sessions need a database. The server picks one at start-up, creates its tables and applies new migrations automatically (`server/migrations.js`; each is recorded in `schema_migrations`).
+
+| Setting | Database | Survives restarts on Render's free plan |
+|---------|----------|------------------------------------------|
+| `DATABASE_URL=postgres://…` | PostgreSQL | Yes |
+| `DATA_DIR` (no `DATABASE_URL`) | SQLite file `lastcall.db` in that folder | Only on a persistent disk (paid plans) |
+| neither | memory | No: history resets on every restart, and the dashboard shows a warning |
+
+Render's free web service has no disk, so for lasting history use PostgreSQL:
+- **Render Postgres:** create one in the dashboard (**New > Postgres**), in the same region as the web service, and copy its **Internal Database URL** into `DATABASE_URL`. Check Render's current pricing first: free Render databases expire after a set period unless upgraded.
+- **Another provider** (for example Neon or Supabase, both with free tiers): copy its connection string into `DATABASE_URL`, and add `?sslmode=require` if it doesn't already have it.
+
+If the database can't be reached at start-up, the game still starts, keeps statistics in memory, and logs an error. The game itself never depends on the database.
+
+**Backups.** Use your provider's backups for PostgreSQL. For SQLite, copy `lastcall.db` while the server is stopped.
+
+### What the dashboard shows
+
+**Live, from server memory** (resets when the server restarts): players connected now, rooms with someone in them, stages in progress, and the most players connected at once since the last restart.
+
+**Stored history** (for today, the last 7 days and the last 30 days):
+- **Stages:** started, completed, won, lost, abandoned, in progress, and the completion rate.
+- **Sessions:** unique browser sessions, room sessions, average session duration, and the peak number of players connected at once.
+- **Connections:** drops, drops per session, quick recoveries and reconnections.
+- **Puzzles**, per machine: completion rate, average attempts, wrong answers and hints.
+- **Activity:** a chart of stages started per day, a list of recently seen anonymous browser sessions, and older months as daily totals.
+
+**Admin:** your signed-in sessions (revoke any of them, or sign out all the others) and the audit log.
+
+How each number is counted:
+
+| Metric | Definition |
+|--------|------------|
+| Players connected now | Seats with an open connection right now |
+| Stage started | Either player started a stage; one attempt at a stage is one "game" |
+| Won | All three puzzles solved |
+| Lost | The stage countdown ran out |
+| Abandoned | Ended without a result (back to the map, or the room closed), or no result 6 hours after starting |
+| Completed | Won + lost |
+| Completion rate | Won ÷ (won + lost + abandoned) |
+| Browser session | One browser tab's session: a random id in `sessionStorage` that ends when the tab closes. **Not a person:** the same person on two devices, or after closing the tab, counts again |
+| Room session | One browser session's time in one room, from first connecting to leaving or the room closing |
+| Average session duration | Mean length of room sessions that ended in the range (sessions cut off by a restart are left out) |
+| Drop / long drop | A connection closed without leaving; long drops lasted over 8 seconds |
+| Quick recovery | A reconnection within 8 seconds of a drop |
+| Peak concurrent players | The most players connected at once, per UTC day |
+| Time ranges | "Today" starts at 00:00 UTC; 7 and 30 days are rolling windows ending now. Results count when they happen |
+
+The dashboard repeats these under **How each number is counted**.
+
+### Privacy and retention
+
+- **Never stored:** chat, player names, room codes (they are invitations), seat tokens, answers, passwords, IP addresses.
+- **Stored instead:** the room and the browser session appear only as keyed hashes (HMACs) made with a key derived from `SAVE_SECRET`.
+- **Repeats are harmless.** Each event has an id, so writing it twice (for example after a failed write is retried) stores it once.
+- **Retention:**
+  - Raw events: 90 days (`ANALYTICS_RETENTION_DAYS`), then added up into daily totals and deleted.
+  - Daily totals: 730 days (`ANALYTICS_ROLLUP_DAYS`).
+  - Audit log: 365 days. Its network addresses are shortened to /24 (IPv4) or /48 (IPv6).
+- **Players are told.** The start screen says anonymous statistics are kept. If you run the game where privacy laws apply, check whether you need more (this isn't legal advice).
+
+### Sessions and the audit log
+
+- **The session cookie** (`__Host-lc_admin`) is `Secure`, `HttpOnly` and `SameSite=Strict`, and only its hash is stored. Sign-in needs HTTPS, or `http://localhost` when testing.
+- **Sessions end** after 30 idle minutes or 8 hours (`ADMIN_IDLE_MINUTES`, `ADMIN_SESSION_HOURS`), and the cookie is replaced every 15 minutes.
+- **Sign out** with **Sign out**. Under **Admin sessions** you can revoke any session, or **Sign out all other sessions** if you signed in somewhere you no longer trust.
+- **Sign-in attempts are limited** to 5 per network address and 30 overall every 15 minutes.
+- **Every change is checked:** it needs a per-session CSRF token and a request from the dashboard's own page.
+- **The audit log** lists sign-ins (and failed or blocked attempts), sign-outs, revocations and refused requests. It never contains passwords, codes or cookies.
+
+## Search engines, copying and ownership
+
+### Keeping the game out of Google
+
+Every page carries `<meta name="robots" content="noindex">` and an `X-Robots-Tag: noindex` header, so search engines that read the page drop it from their results. `robots.txt` deliberately allows crawling: a crawler that is blocked never sees the `noindex` and can still list the bare address. WhatsApp and other link previews keep working, because they don't use search indexing.
+
+`noindex` **reduces search visibility; it does not make the game private.** Anyone with the link can still play, and other sites can still link to it.
+
+**To remove a result that Google already shows:**
+1. Wait for Google to recrawl: once it sees `noindex`, the page drops out, usually within days to weeks.
+2. To speed it up, verify the site in [Google Search Console](https://search.google.com/search-console): add a **URL prefix** property for your address, choose the **HTML tag** method, and copy the `content` value into the `GOOGLE_SITE_VERIFICATION` environment variable. The server then adds the tag, with no code change.
+3. In Search Console, use **Removals > New request** to hide the address for about six months while `noindex` takes over permanently. Use **URL Inspection > Request indexing** to ask Google to recrawl now.
+4. If you can't verify the site, Google's [Refresh Outdated Content](https://search.google.com/search-console/remove-outdated-content) tool lets anyone ask Google to recheck a page.
+
+On Render's free plan, Render answers `robots.txt` itself with "disallow all" while the service is asleep. Google retries later, but checks can take a little longer.
+
+### What can and can't be protected
+
+- **The game's code is delivered to every player's browser, so it can be read and copied.** Minifying the files would only make them harder to read, not hidden. There is no build step and no source maps are published; keep production source maps off unless you set up private error monitoring.
+- **Last Call does not try to block** right-click, copying, screenshots or developer tools. Those tricks are easy to get round and get in the way of keyboard and screen-reader users.
+- **What actually protects the game** is that the answers and the other role's clues never reach the browser, and that every result is decided on the server.
+
+### The source repository
+
+The repository `shibinputhramannil/last-call` is currently **public**: anyone can browse and download the source on GitHub. Making it private would stop people browsing the server code, puzzle generators and tests, though the browser code would still reach every player.
+
+If you make it private:
+- Render keeps deploying as long as its GitHub connection still has access to the repository; check under the service's **Settings > Build & Deploy** afterwards.
+- GitHub Actions minutes for private repositories are limited on free accounts.
+
+The visibility has not been changed: that's the owner's decision.
+
+### Copyright
+
+© 2026 Sibin P. All rights reserved. The game, its story, artwork and code are not licensed for reuse (`"license": "UNLICENSED"` in `package.json`), and the start screen carries the notice. A notice states ownership; it doesn't technically stop copying.
+
 ## Sharing and link previews
 
 Sending the game's address, or a room invite link (`…/?room=K7QM3X`), in WhatsApp, iMessage, Slack or social apps shows a preview with the Last Call poster, a title and a short description.
@@ -268,7 +402,7 @@ Or paste the address into a preview checker such as <https://www.opengraph.xyz> 
 All are optional.
 - **Locally:** copy `.env.example` to `.env`; the server reads it on start.
 - **On a host:** set them in the dashboard.
-- **Secrets:** never commit `.env`, a real API key or a real `SAVE_SECRET`. `.env` is git-ignored, and `.env.example` holds placeholders only.
+- **Secrets:** never commit `.env`, an API key, `SAVE_SECRET`, `DATABASE_URL` or any `ADMIN_*` value. `.env` is git-ignored, and `.env.example` holds placeholders only.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -277,6 +411,16 @@ All are optional.
 | `TRUST_PROXY` | `false` | Set to `1` behind a reverse proxy or a platform like Render, Railway or Fly. Rate limits then see real client IPs (the last `X-Forwarded-For` entry), and HTTPS is detected. Leave it off when nothing sits in front of the server, or clients could spoof their IP. |
 | `CLIENT_IP_HEADER` | none | With `TRUST_PROXY=1`: a header that holds the real client IP and that clients can't forge through your proxy. Use `cf-connecting-ip` on Render (which sits behind Cloudflare; `render.yaml` sets it) or `fly-client-ip` on Fly.io. Unset means the last `X-Forwarded-For` entry is used. |
 | `PUBLIC_URL` | `RENDER_EXTERNAL_URL`, else the request's host | Public address for share previews, e.g. `https://last-call.example.com`. |
+| `DATABASE_URL` | none | PostgreSQL for statistics and admin sessions. See [Database](#database). |
+| `ANALYTICS_RETENTION_DAYS` | `90` | Days to keep raw statistics events before adding them up into daily totals. |
+| `ANALYTICS_ROLLUP_DAYS` | `730` | Days to keep the daily totals. |
+| `ADMIN_USERNAME` | none | The Superadmin's username. All three `ADMIN_*` values come from `npm run admin:setup`. |
+| `ADMIN_PASSWORD_HASH` | none | The scrypt hash of the Superadmin's password (never the password itself). |
+| `ADMIN_TOTP_SECRET` | none | The key for the Superadmin's one-time codes. |
+| `ADMIN_MFA` | `required` | Set to `off` to allow sign-in without a code (not recommended). |
+| `ADMIN_SESSION_HOURS` | `8` | Longest an admin session lasts. |
+| `ADMIN_IDLE_MINUTES` | `30` | Admin sessions end after this long without use. |
+| `GOOGLE_SITE_VERIFICATION` | none | Google Search Console's HTML-tag value, to verify the site. |
 | `SAVE_SECRET` | random per start | Signs saved progress and room tickets kept by browsers. 16+ characters; keep it stable. See [Persistence](#persistence). |
 | `DATA_DIR` | none | Folder for saved rooms, on a persistent disk. See [Persistence](#persistence). |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
@@ -307,6 +451,13 @@ npm test        # node:test suites (below)
 npm run check   # both
 ```
 
+The PostgreSQL tests run when `TEST_DATABASE_URL` points at a **disposable** database (they wipe their own schemas). CI provides one. Locally, with Docker:
+
+```bash
+docker run -d --name lastcall-pg-test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=lastcall_test -p 127.0.0.1:15433:5432 postgres:17-alpine
+TEST_DATABASE_URL=postgres://postgres:test@127.0.0.1:15433/lastcall_test npm test
+```
+
 The tests cover:
 - **Every one of the 200 stages,** each generated with several seeds: an independent solver works out the answer using only the Caller's and the Operator's views, and the server must accept it. Each role's view is checked for the other role's clues and for the answer.
 - **The campaign's structure:** at least 200 stages, no two with the same mix of puzzles, difficulty rising chapter by chapter, and each finale the hardest stage of its chapter.
@@ -316,6 +467,15 @@ The tests cover:
 - **Rooms:** presence and the quiet grace period for drops, chat delivery and de-duplication, Continue and stage picks pressed by both players at once, simultaneous reconnects, and restarts with and without `DATA_DIR`.
 - **The browser's connection layer,** in Node with a fake WebSocket: one socket at a time, close reasons that never leak between sockets, backoff, dead-socket detection, and no false alarms after a sleeping tab wakes.
 - **Two real WebSocket clients** playing a whole stage, dropping and reconnecting, plus the share-preview tags, health check, graceful shutdown and rate limits.
+- **The admin dashboard**, on SQLite and PostgreSQL:
+  - Signed-out visitors and players get nothing from it.
+  - Sign-in needs the password and a fresh one-time code, and is rate-limited.
+  - Cookies carry the right flags; CSRF and origin checks hold.
+  - Idle, expired, rotated and revoked sessions stop working.
+  - The audit log never holds secrets.
+- **Statistics,** on SQLite and PostgreSQL: counts at the exact edges of each time range, repeated and retried writes stored once, and old events rolled up and expired.
+- **No private data** (room codes, tokens, names, chat or answers) reaches the admin pages, the database or public endpoints.
+- **Message validation**, the failed-seat limit, ignored forwarded-IP headers, oversized messages, security headers and `noindex`.
 
 There is no build step: the browser loads the files in `public/` and `shared/` as they are. GitHub Actions runs `npm run check` on every push to `main` and on pull requests ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
@@ -352,6 +512,15 @@ server/
   store.js          Room persistence (DATA_DIR) and the signing secret
   puzzles/          One module per mechanic: levels, generation, role views, answer check, hints
   narrator.js       Optional Claude-written atmosphere lines
+  validate.js       Shape checks for every WebSocket message
+  admin.js          The /admin dashboard: sign-in, sessions, CSRF, audit, data APIs
+  auth.js           Password hashing (scrypt) and one-time codes (TOTP)
+  analytics.js      Anonymous statistics: events, metrics, roll-ups and retention
+  db.js             One SQL layer over PostgreSQL and SQLite
+  migrations.js     The database schema, versioned
+admin/              The dashboard's pages (served only by server/admin.js)
+scripts/admin-setup.js  Makes the Superadmin's environment values
+docs/SECURITY.md    Security notes and threat model
 tools/og-poster.html  Source of the share poster
 test/               Node test runner suites
 render.yaml         Render Blueprint (one web service)
@@ -385,7 +554,10 @@ render.yaml         Render Blueprint (one web service)
   - room creation: 8 per IP every 10 minutes
   - code lookups and joins: 40 per IP every 5 minutes
   - WebSocket connections: 30 per IP per minute, at most 12 open at once
-  - messages per socket, chat per player, and answer attempts are throttled too
+  - failed seat attempts (wrong token or room): 20 per IP every 10 minutes
+  - admin sign-in: 5 per IP and 30 overall every 15 minutes
+  - messages per socket, chat per player, answers (2.5 s apart) and hints (30 s apart) are throttled too
+- **Validation:** every WebSocket message is checked against its type's allowed fields, types and lengths before the game sees it.
 - **Message sizes:** WebSocket messages are capped at 16 KB, request bodies at 16 KB, chat messages at 400 characters, and names at 20.
 - **Input cleaning:** control and bidi-override characters are stripped. Chat is always rendered as text, never HTML. Room codes in share tags are validated and escaped.
 - **Headers:** responses carry a strict Content-Security-Policy (no inline scripts or styles), `Referrer-Policy: no-referrer` (so room codes in URLs never leak), `X-Frame-Options: DENY` and `nosniff`. WebSocket connections from other sites are refused.

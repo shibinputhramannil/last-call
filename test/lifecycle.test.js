@@ -25,17 +25,13 @@ async function start(config = baseConfig, options = {}) {
 const post = (base, path, body) =>
   fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
-test('health check reports status, rooms and connected players', async () => {
+test('the public health check says only whether the server is up', async () => {
   const { app, base } = await start();
   try {
     const res = await fetch(base + '/healthz');
     assert.equal(res.status, 200);
     assert.equal(res.headers.get('cache-control'), 'no-store');
-    const body = await res.json();
-    assert.equal(body.status, 'ok');
-    assert.equal(body.rooms, 0);
-    assert.equal(body.players, 0);
-    assert.equal(typeof body.uptimeSeconds, 'number');
+    assert.deepEqual(await res.json(), { status: 'ok' }, 'no player counts or uptime for the public');
 
     const head = await fetch(base + '/healthz', { method: 'HEAD' });
     assert.equal(head.status, 200);
@@ -57,7 +53,7 @@ test('graceful shutdown drains, tells players it is restarting, and closes every
     const check = () => (messages.some((m) => m.t === 'welcome') ? resolve() : setTimeout(check, 10));
     check();
   });
-  assert.equal((await (await fetch(base + '/healthz')).json()).players, 1);
+  assert.equal(app.rooms.stats().players, 1);
 
   const closed = new Promise((resolve) => ws.once('close', resolve));
   const done = app.shutdown({ flushMs: 300 });
@@ -102,7 +98,7 @@ test('connections that go silent are dropped even if WebSocket pings are answere
     await new Promise((resolve) => setTimeout(resolve, 300));
     assert.equal(chatty.readyState, WebSocket.OPEN, 'a client that keeps pinging stays connected');
     clearInterval(pinger);
-    assert.equal((await (await fetch(base + '/healthz')).json()).players, 1);
+    assert.equal(app.rooms.stats().players, 1);
     chatty.close();
   } finally {
     await app.close();

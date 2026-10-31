@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Dashboard · Last Call admin</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/admin/assets/admin.css" />
+    <script type="module" src="/admin/assets/dashboard.js"></script>
+  </head>
+  <body>
+    <header class="top">
+      <h1>Last Call <span>admin</span></h1>
+      <span class="who" id="who"></span>
+      <button class="btn" id="refresh" type="button">Refresh</button>
+      <button class="btn" id="signout" type="button">Sign out</button>
+    </header>
+
+    <main>
+      <div class="notice is-warning" id="storage-warning" role="status" hidden>
+        <span class="icon" aria-hidden="true">⚠</span>
+        <div><strong>History is not being kept</strong><span id="storage-warning-text"></span></div>
+      </div>
+
+      <section class="panel" aria-labelledby="live-title">
+        <div class="panel-head">
+          <h2 id="live-title">Right now</h2>
+          <span class="source is-live">Live, from server memory</span>
+          <p id="live-time"></p>
+        </div>
+        <div class="hero">
+          <div>
+            <div class="hero-value" id="live-players">–</div>
+            <div class="hero-label">players connected now</div>
+          </div>
+        </div>
+        <div class="kpis" id="live-kpis"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="history-title">
+        <div class="panel-head">
+          <h2 id="history-title">Play history</h2>
+          <span class="source is-stored" id="storage-source">Stored history</span>
+          <div class="range" role="group" aria-label="Time range" id="range">
+            <button type="button" data-range="today" aria-pressed="false">Today</button>
+            <button type="button" data-range="week" aria-pressed="true">Last 7 days</button>
+            <button type="button" data-range="month" aria-pressed="false">Last 30 days</button>
+          </div>
+          <p id="range-note"></p>
+        </div>
+        <h3 class="subhead">Stages played</h3>
+        <div class="kpis" id="game-kpis"></div>
+        <h3 class="subhead">Browser sessions (not people)</h3>
+        <div class="kpis" id="session-kpis"></div>
+        <h3 class="subhead">Connections</h3>
+        <div class="kpis" id="connection-kpis"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="daily-title">
+        <div class="panel-head">
+          <h2 id="daily-title">Stages started per day, last 30 days (UTC)</h2>
+          <span class="source is-stored">Stored history</span>
+        </div>
+        <div class="chart" id="daily-chart"></div>
+        <details class="table-view">
+          <summary>Show as a table</summary>
+          <div class="table-wrap"><table id="daily-table"></table></div>
+        </details>
+      </section>
+
+      <section class="panel" aria-labelledby="puzzles-title">
+        <div class="panel-head">
+          <h2 id="puzzles-title">Puzzles</h2>
+          <span class="source is-stored">Stored history</span>
+          <p id="puzzles-range"></p>
+        </div>
+        <div class="table-wrap"><table id="puzzles-table"></table></div>
+      </section>
+
+      <section class="panel" aria-labelledby="activity-title">
+        <div class="panel-head">
+          <h2 id="activity-title">Recent activity</h2>
+          <span class="source is-stored">Stored history, last 30 days</span>
+          <p>Anonymous browser-session IDs only. No names, chat, room codes or answers are ever stored.</p>
+        </div>
+        <div class="table-wrap"><table id="activity-table"></table></div>
+      </section>
+
+      <section class="panel" aria-labelledby="months-title" id="months-panel" hidden>
+        <div class="panel-head">
+          <h2 id="months-title">Older history, by month</h2>
+          <span class="source is-stored">Daily totals</span>
+          <p id="months-note"></p>
+        </div>
+        <div class="table-wrap"><table id="months-table"></table></div>
+      </section>
+
+      <div class="grid-2">
+        <section class="panel" aria-labelledby="admin-sessions-title">
+          <div class="panel-head">
+            <h2 id="admin-sessions-title">Admin sessions</h2>
+            <p>Signed-in admin browsers. Revoke any you don’t recognise.</p>
+          </div>
+          <div class="table-wrap"><table id="admin-sessions-table"></table></div>
+          <p><button class="btn btn-danger" id="revoke-others" type="button">Sign out all other sessions</button></p>
+        </section>
+
+        <section class="panel" aria-labelledby="audit-title">
+          <div class="panel-head">
+            <h2 id="audit-title">Audit log</h2>
+            <p>Sign-ins, sign-outs and revocations. Networks are shortened to /24 (IPv4) or /48 (IPv6).</p>
+          </div>
+          <div class="table-wrap"><table id="audit-table"></table></div>
+        </section>
+      </div>
+
+      <section class="panel definitions" aria-labelledby="definitions-title">
+        <details>
+          <summary id="definitions-title">How each number is counted</summary>
+          <dl>
+            <dt>Players connected now</dt>
+            <dd>Seats with an open connection at this moment, counted from server memory. Live numbers reset when the server restarts.</dd>
+            <dt>Active rooms now</dt>
+            <dd>Rooms with at least one player connected. Open rooms also includes rooms waiting for players to come back.</dd>
+            <dt>Peak concurrent players</dt>
+            <dd>The most players connected at the same moment: since the last restart (live), and per UTC day (stored).</dd>
+            <dt>Stage started</dt>
+            <dd>Either player started a stage. One stage attempt is one “game”.</dd>
+            <dt>Won</dt>
+            <dd>All three puzzles of the stage were solved.</dd>
+            <dt>Lost</dt>
+            <dd>The stage countdown ran out (countdown rooms only).</dd>
+            <dt>Abandoned</dt>
+            <dd>The stage ended without a win or a loss: a player went back to the map, or the room closed. A stage with no result 6 hours after it started (for example, lost to a server restart) also counts as abandoned, on the day it started.</dd>
+            <dt>Completed</dt>
+            <dd>Won plus lost: stages that reached a result screen.</dd>
+            <dt>Completion rate</dt>
+            <dd>Won ÷ (won + lost + abandoned). Stages still in progress are left out.</dd>
+            <dt>Time ranges</dt>
+            <dd>Today is from 00:00 UTC; the last 7 and 30 days are rolling windows ending now. Results are counted when they happen, so a stage started before a range and won inside it adds to “won” but not “started”.</dd>
+            <dt>Browser session</dt>
+            <dd>One browser tab’s session: a random ID kept in the tab’s session storage, which ends when the tab is closed. The same person on two devices, or after closing the tab, counts again. These are browser sessions, not people.</dd>
+            <dt>Room session</dt>
+            <dd>One browser session’s time in one room, from first connecting to leaving or the room closing.</dd>
+            <dt>Average session duration</dt>
+            <dd>The mean length of room sessions that ended in the range. Sessions cut off by a server restart have no end and are left out.</dd>
+            <dt>Drops</dt>
+            <dd>A player’s connection closed without them leaving. Long drops lasted more than 8 seconds, the point at which the partner is told.</dd>
+            <dt>Drops per session</dt>
+            <dd>Drops ÷ room sessions joined in the range.</dd>
+            <dt>Quick recoveries</dt>
+            <dd>Reconnections within 8 seconds of a drop ÷ drops.</dd>
+            <dt>Puzzle completion</dt>
+            <dd>Puzzles solved ÷ puzzles shown, per machine. Wrong answers and hints are per puzzle shown; average attempts counts the answers sent for each solved puzzle.</dd>
+            <dt>Storage and retention</dt>
+            <dd id="def-retention">Each event is stored once, even if it is written twice. After the retention period, events are added up into daily totals and deleted.</dd>
+          </dl>
+        </details>
+      </section>
+    </main>
+  </body>
+</html>

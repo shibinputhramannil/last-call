@@ -65,6 +65,8 @@ class Seat {
     this.lastSeenAt = now;
     this.droppedAt = null;
     this.dropAnnounced = false;
+    this.connectedAt = null;
+    this.sessionKey = null; // keyed hash of the browser session, for anonymous statistics
     this.recentClientIds = new Map();
     this.chatLimiter = new RateLimiter({ capacity: 6, perMs: 8_000 });
     this.typingLimiter = new RateLimiter({ capacity: 1, perMs: 1_500 });
@@ -86,7 +88,15 @@ class Seat {
   }
 
   toJSON() {
-    return { role: this.role, name: this.name, token: this.token, everConnected: this.everConnected, lastSeenAt: this.lastSeenAt };
+    return {
+      role: this.role,
+      name: this.name,
+      token: this.token,
+      everConnected: this.everConnected,
+      lastSeenAt: this.lastSeenAt,
+      connectedAt: this.connectedAt,
+      sessionKey: this.sessionKey,
+    };
   }
 }
 
@@ -206,6 +216,8 @@ export class Room {
       const seat = new Seat(role, s.name, now, s.token);
       seat.everConnected = Boolean(s.everConnected);
       seat.lastSeenAt = now;
+      seat.connectedAt = Number.isFinite(s.connectedAt) ? s.connectedAt : null;
+      seat.sessionKey = typeof s.sessionKey === 'string' ? s.sessionKey : null;
       for (const m of room.chat) if (m.kind === 'player' && m.role === role && m.clientId) seat.recentClientIds.set(m.clientId, m);
       room.seats[role] = seat;
     }
@@ -221,6 +233,7 @@ export class RoomManager {
     narrator = null,
     signer = null,
     store = null,
+    analytics = null,
     log = silentLogger,
     now = () => Date.now(),
   }) {
@@ -229,11 +242,68 @@ export class RoomManager {
     this.narrator = narrator;
     this.signer = signer;
     this.store = store;
+    this.analytics = analytics;
+    this.startedAt = now();
+    this.peak = { players: 0, at: null };
     this.log = log;
     this.now = now;
     this.rooms = new Map();
     this.tombstones = new Map();
     this.dirty = new Set();
+  }
+
+  // ---- Anonymous statistics ------------------------------------------------------
+  // Events carry only keyed hashes for the room and the browser session, never
+  // a room code, name, token, chat text or answer (see server/analytics.js).
+
+  track(kind, room, fields = {}) {
+    if (!this.analytics) return;
+    this.analytics.record({ kind, at: this.now(), room: this.analytics.roomKey(room.code, room.seed), ...fields });
+  }
+
+  trackSeat(kind, room, seat, fields = {}) {
+    this.track(kind, room, { session: seat.sessionKey, role: seat.role, ...fields });
+  }
+
+  trackRun(kind, room, fields = {}) {
+    const run = room.game.run;
+    this.track(kind, room, { run: run.id, stage: run.stageId, id: `run:${run.id}:${kind === 'stage.started' ? 'start' : 'end'}`, ...fields });
+  }
+
+  trackPuzzleShown(room) {
+    const round = room.game.round;
+    if (round) this.track('puzzle.shown', room, { id: `puzzle:${round.id}:shown`, run: room.game.run.id, stage: room.game.run.stageId, puzzle: round.type, level: round.level });
+  }
+
+  endSession(room, seat, until) {
+    if (seat.connectedAt != null) this.trackSeat('session.ended', room, seat, { value: Math.max(0, until - seat.connectedAt) });
+  }
+
+  /** Live counts from memory: players connected now, rooms with someone in them, and the peak since start-up. */
+  liveStats() {
+    let players = 0;
+    let activeRooms = 0;
+    let stagesInProgress = 0;
+    for (const room of this.rooms.values()) {
+      const connected = room.seatList.filter((s) => s.connected).length;
+      players += connected;
+      if (connected) activeRooms++;
+      if (room.game.playing) stagesInProgress++;
+    }
+    return { players, activeRooms, openRooms: this.rooms.size, stagesInProgress, peakSinceStart: this.peak.players, peakAt: this.peak.at, startedAt: this.startedAt };
+  }
+
+  /** Session keys of everyone connected right now (to mark them online in the dashboard). */
+  onlineSessionKeys() {
+    const keys = new Set();
+    for (const room of this.rooms.values()) for (const s of room.seatList) if (s.connected && s.sessionKey) keys.add(s.sessionKey);
+    return keys;
+  }
+
+  notePeak() {
+    const { players, activeRooms } = this.liveStats();
+    if (players > this.peak.players) this.peak = { players, at: this.now() };
+    this.analytics?.notePeak(players, activeRooms);
   }
 
   // ---- Persistence ------------------------------------------------------------
@@ -327,6 +397,7 @@ export class RoomManager {
     this.absorbProgress(room, progress);
     const seat = new Seat(role, cleanName(name), now);
     room.seats[role] = seat;
+    this.track('room.opened', room);
     this.log.info('room opened', { room: code, mode, rooms: this.rooms.size });
     return { room, seat };
   }
@@ -374,6 +445,8 @@ export class RoomManager {
     const open = this.openSeat(room);
     if (!open) return { error: 'FULL' };
     const now = this.now();
+    const replaced = room.seats[open.role];
+    if (replaced) this.endSession(room, replaced, replaced.lastSeenAt);
     const seat = new Seat(open.role, cleanName(name), now);
     room.seats[open.role] = seat;
     room.lastActiveAt = now;
@@ -397,6 +470,7 @@ export class RoomManager {
     seat.everConnected = true;
     room.seats[t.r] = seat;
     room.system('The game server restarted, so this room was rebuilt. Your campaign progress is safe; a stage that was in progress starts again.', now);
+    this.track('room.rebuilt', room);
     this.log.info('room rebuilt from ticket', { room: code, rooms: this.rooms.size });
     return room;
   }
@@ -409,7 +483,7 @@ export class RoomManager {
     return t;
   }
 
-  attach(code, token, socket, { ticket = null, progress = null } = {}) {
+  attach(code, token, socket, { ticket = null, progress = null, sid = null } = {}) {
     const now = this.now();
     let room = this.rooms.get(code);
     if (!room) {
@@ -451,6 +525,11 @@ export class RoomManager {
     }
     const returning = seat.everConnected;
     const wasAnnounced = seat.dropAnnounced;
+    const droppedAt = seat.droppedAt;
+    if (this.analytics) {
+      // A browser session id names this tab's session; without one, the seat itself does.
+      seat.sessionKey = this.analytics.sessionKey(sid || `seat:${seat.token}`);
+    }
     seat.socket = socket;
     seat.everConnected = true;
     seat.lastSeenAt = now;
@@ -467,6 +546,12 @@ export class RoomManager {
       progress: this.progressToken(room),
     });
     if (gained) this.sendProgress(room);
+    if (!returning || seat.connectedAt == null) {
+      seat.connectedAt = now;
+      this.trackSeat('session.joined', room, seat);
+    } else {
+      this.trackSeat('session.reconnected', room, seat, { value: droppedAt != null ? now - droppedAt : 0 });
+    }
     if (!returning) room.system(`${seat.displayName} joined as the ${ROLE_LABEL[seat.role]}.`, now);
     else if (wasAnnounced) room.system(`${seat.displayName} is back on the line.`, now);
     if (room.game.paused && room.bothConnected() && room.game.resume(now) && room.heldAnnounced) {
@@ -474,6 +559,7 @@ export class RoomManager {
     }
     if (room.bothConnected()) room.heldAnnounced = false;
     room.broadcastState(now);
+    this.notePeak();
     return { room, seat };
   }
 
@@ -486,6 +572,7 @@ export class RoomManager {
     seat.dropAnnounced = false;
     room.lastActiveAt = now;
     if (!this.rooms.has(room.code)) return;
+    this.trackSeat('session.dropped', room, seat);
     // Stop the clock at once, but say nothing yet: most drops are brief.
     room.game.pause(now);
     room.broadcastState(now);
@@ -496,6 +583,7 @@ export class RoomManager {
     for (const seat of room.seatList) {
       if (seat.connected || seat.droppedAt == null || seat.dropAnnounced || now - seat.droppedAt < PRESENCE_GRACE_MS) continue;
       seat.dropAnnounced = true;
+      this.trackSeat('session.drop_long', room, seat);
       room.system(`${seat.displayName} lost the line.`, now);
       if (room.game.playing && !room.heldAnnounced) {
         room.heldAnnounced = true;
@@ -507,6 +595,10 @@ export class RoomManager {
 
   closeRoom(room, reason) {
     const message = CLOSE_MESSAGES[reason](this.cfg);
+    const t = this.now();
+    if (room.game.playing) this.trackRun('stage.abandoned', room);
+    for (const seat of room.seatList) this.endSession(room, seat, seat.connected ? t : seat.lastSeenAt);
+    this.track('room.closed', room);
     for (const seat of room.seatList) {
       if (!seat.socket) continue;
       const socket = seat.socket;
@@ -547,6 +639,7 @@ export class RoomManager {
       }
       this.announceDrops(room, now);
       if (room.game.checkTimeout(now)) {
+        this.trackRun('stage.lost', room);
         room.system('The stage clock ran out and the line went dead. Try the stage again: the puzzles will be new.', now);
         this.narrate(room, { event: 'lost' });
         room.broadcastState(now);
@@ -658,6 +751,8 @@ export class RoomManager {
       return this.notice(room, seat, 'WAITING', 'You need both a Caller and an Operator on the line to start a stage.');
     }
     game.startStage(stage, now);
+    this.trackRun('stage.started', room, { session: seat.sessionKey, role: seat.role });
+    this.trackPuzzleShown(room);
     room.heldAnnounced = false;
     room.system(`${seat.displayName} opened Stage ${stage.id}: ${stage.title}.`, now);
     room.broadcast({ t: 'event', name: 'stage-started', stageId: stage.id });
@@ -681,7 +776,10 @@ export class RoomManager {
     if (game.phase === 'lobby') return;
     const current = game.playing ? game.run.id : game.result?.runId;
     if (msg.from !== current) return;
-    if (game.playing) room.system(`${seat.displayName} left Stage ${game.run.stageId} for the stage map.`, now);
+    if (game.playing) {
+      this.trackRun('stage.abandoned', room, { session: seat.sessionKey, role: seat.role });
+      room.system(`${seat.displayName} left Stage ${game.run.stageId} for the stage map.`, now);
+    }
     game.toLobby();
     room.heldAnnounced = false;
     room.broadcastState(now);
@@ -713,8 +811,18 @@ export class RoomManager {
 
   onAnswer(room, seat, msg, now) {
     const game = room.game;
+    const round = game.round;
     const result = game.submitAnswer(seat.role, msg.puzzleId, msg.answer, now);
     if (!result.ok) return this.notice(room, seat, result.code, result.message, { retryInMs: result.retryInMs });
+    const about = { session: seat.sessionKey, role: seat.role, run: game.run.id, stage: game.run.stageId, puzzle: round.type, level: round.level };
+    if (result.correct) {
+      this.track('puzzle.solved', room, { ...about, id: `puzzle:${round.id}:solved`, value: round.attempts });
+      if (result.stageComplete) this.trackRun('stage.won', room, { session: seat.sessionKey, role: seat.role, value: game.result.activeMs });
+      else this.trackPuzzleShown(room);
+    } else {
+      this.track('answer.wrong', room, { ...about, id: `puzzle:${round.id}:wrong:${round.attempts}` });
+      if (result.lost) this.trackRun('stage.lost', room);
+    }
 
     if (result.correct && result.stageComplete) {
       const stage = game.stage;
@@ -757,11 +865,21 @@ export class RoomManager {
       if (result.code === 'STALE' || result.code === 'NOT_PLAYING') return;
       return this.notice(room, seat, result.code, result.message, { retryInMs: result.retryInMs });
     }
+    const round = room.game.round;
+    this.trackSeat('hint.read', room, seat, {
+      id: `puzzle:${round.id}:hint:${seat.role}:${result.tier}`,
+      run: room.game.run.id,
+      stage: room.game.run.stageId,
+      puzzle: round.type,
+      level: round.level,
+    });
     room.system(`${seat.displayName} read hint ${result.tier} of 3 in their ${seat.role === 'caller' ? 'notes' : 'manual'}.`, now);
     room.broadcastState(now);
   }
 
   onLeave(room, seat, now) {
+    this.endSession(room, seat, now);
+    seat.connectedAt = null;
     const socket = seat.socket;
     seat.socket = null;
     room.seats[seat.role] = null;

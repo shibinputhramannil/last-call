@@ -28,6 +28,14 @@ export class RateLimiter {
     return Math.ceil((cost - bucket.tokens) / this.refillPerMs);
   }
 
+  /** Like take, but only reports: 0 if `cost` tokens are available now, otherwise ms until they would be. */
+  peek(key, cost = 1, now = Date.now()) {
+    const bucket = this.buckets.get(key);
+    if (!bucket) return 0;
+    const tokens = Math.min(this.capacity, bucket.tokens + (now - bucket.at) * this.refillPerMs);
+    return tokens >= cost ? 0 : Math.ceil((cost - tokens) / this.refillPerMs);
+  }
+
   /** Drops full buckets (or, under pressure, the oldest half). */
   prune(now = Date.now(), aggressive = false) {
     for (const [key, bucket] of this.buckets) {

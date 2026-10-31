@@ -5,11 +5,11 @@ export default [
   { ignores: ['node_modules/**'] },
   js.configs.recommended,
   {
-    files: ['server/**/*.js', 'test/**/*.js', 'eslint.config.js'],
+    files: ['server/**/*.js', 'scripts/**/*.js', 'test/**/*.js', 'eslint.config.js'],
     languageOptions: { ecmaVersion: 2023, sourceType: 'module', globals: globals.node },
   },
   {
-    files: ['public/**/*.js'],
+    files: ['public/**/*.js', 'admin/**/*.js'],
     languageOptions: { ecmaVersion: 2023, sourceType: 'module', globals: globals.browser },
   },
   {

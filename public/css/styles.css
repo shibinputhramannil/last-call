@@ -2040,6 +2040,17 @@ button.line-jack:hover {
   font-weight: 600;
 }
 
+.menu-footer {
+  max-width: 46rem;
+  margin: 2.5rem auto 0;
+  text-align: center;
+  font-size: var(--step--1);
+  color: var(--ink-dim);
+}
+.menu-footer p {
+  margin: 0 0 0.4rem;
+}
+
 /* ---- Top bar ------------------------------------------------------------------ */
 
 .brand {

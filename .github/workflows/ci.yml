@@ -12,6 +12,23 @@ jobs:
   check:
     name: Lint and test
     runs-on: ubuntu-latest
+    # A throwaway PostgreSQL for the database tests (SQLite is tested too).
+    # The password only protects this short-lived CI container.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci-only-throwaway
+          POSTGRES_DB: lastcall_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgres://postgres:ci-only-throwaway@localhost:5432/lastcall_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

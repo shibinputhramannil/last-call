@@ -10,7 +10,18 @@ import { api, Connection } from './net.js';
 import { renderResult } from './result.js';
 import { setupSettings } from './settings.js';
 import { runOpening } from './story.js';
-import { forgetSeat, getSeat, loadPrefs, loadProgress, markOpeningSeen, openingSeen, saveProgress, saveSeat, saveTicket } from './store.js';
+import {
+  browserSessionId,
+  forgetSeat,
+  getSeat,
+  loadPrefs,
+  loadProgress,
+  markOpeningSeen,
+  openingSeen,
+  saveProgress,
+  saveSeat,
+  saveTicket,
+} from './store.js';
 
 const ROLE_LABEL = { caller: 'Caller', operator: 'Operator' };
 const ANSWER_TIMEOUT_MS = 6_000;
@@ -353,7 +364,7 @@ function enterRoom(code, token) {
     code,
     token,
     // Read fresh on every attempt: after a server restart these rebuild the room.
-    hello: () => ({ ticket: getSeat(code)?.ticket, progress: loadProgress()?.token }),
+    hello: () => ({ ticket: getSeat(code)?.ticket, progress: loadProgress()?.token, sid: browserSessionId() }),
   });
   app.conn = conn;
   conn.addEventListener('status', (e) => onConnStatus(e.detail, connectingTimer));

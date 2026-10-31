@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Sign in · Last Call admin</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/admin/assets/admin.css" />
+    <script type="module" src="/admin/assets/login.js"></script>
+  </head>
+  <body>
+    <main class="signin">
+      <form class="signin-card" id="signin" novalidate>
+        <h1>Last Call admin</h1>
+        <p>Private. Sign in with the Superadmin account set up on the server.</p>
+        <label class="field">
+          Username
+          <input name="username" autocomplete="username" required maxlength="64" />
+        </label>
+        <label class="field">
+          Password
+          <input name="password" type="password" autocomplete="current-password" required maxlength="256" />
+        </label>
+        <label class="field">
+          One-time code
+          <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="7" />
+          <small>The 6-digit code from your authenticator app.</small>
+        </label>
+        <button class="btn btn-primary" type="submit">Sign in</button>
+        <p class="form-error" id="signin-error" role="alert" hidden></p>
+      </form>
+    </main>
+  </body>
+</html>

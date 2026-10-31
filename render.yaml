@@ -32,6 +32,21 @@ services:
       # once; keep it unchanged, or every saved game stops verifying.
       - key: SAVE_SECRET
         generateValue: true
+      # Statistics history and admin sessions. A PostgreSQL connection URL
+      # (Render Postgres "Internal Database URL", or Neon/Supabase with
+      # ?sslmode=require). Without it, statistics live in memory only and the
+      # admin dashboard says so. Secret: set it in the dashboard, never here.
+      - key: DATABASE_URL
+        sync: false
+      # The private /admin dashboard. Generate all three with
+      # `npm run admin:setup` on your own computer, then paste them into the
+      # service's Environment tab. Leave them unset to keep /admin switched off.
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
+      - key: ADMIN_TOTP_SECRET
+        sync: false
       # Optional Claude narrator. Leave off unless you add an API key below.
       - key: ENABLE_AI_NARRATOR
         value: "false"

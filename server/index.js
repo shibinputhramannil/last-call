@@ -1,4 +1,6 @@
+import { createHmac } from 'node:crypto';
 import os from 'node:os';
+import path from 'node:path';
 
 // Give a clear instruction instead of a stack trace when `npm install` was skipped.
 try {
@@ -15,6 +17,10 @@ const { createLogger } = await import('./logger.js');
 const { createNarrator } = await import('./narrator.js');
 const { createSigner } = await import('./signing.js');
 const { createStore, resolveSecret } = await import('./store.js');
+const { openDatabase } = await import('./db.js');
+const { migrate } = await import('./migrations.js');
+const { createAnalytics } = await import('./analytics.js');
+const { adminProblem } = await import('./admin.js');
 
 let config;
 try {
@@ -40,7 +46,39 @@ try {
 if (saveSecret.source === 'ephemeral') {
   log.warn('SAVE_SECRET is not set: saved progress and room tickets will not survive a restart (see README, Persistence)');
 }
-const app = createApp(config, { narrator, log, store, signer: createSigner(saveSecret.secret) });
+
+/**
+ * The statistics and admin database: PostgreSQL (DATABASE_URL), else a SQLite
+ * file in DATA_DIR, else memory. If it can't be reached, the game still starts
+ * and statistics are kept in memory until the next restart.
+ */
+async function openStatistics() {
+  const file = config.dataDir ? path.join(config.dataDir, 'lastcall.db') : null;
+  try {
+    const db = await openDatabase({ url: config.databaseUrl, file, log });
+    const applied = await migrate(db);
+    if (applied.length) log.info('database migrated', { versions: applied.join(',') });
+    return db;
+  } catch (err) {
+    log.error('the statistics database is unavailable; keeping statistics in memory until the next restart', { err: err.message });
+    const db = await openDatabase({ log });
+    await migrate(db);
+    return db;
+  }
+}
+const db = await openStatistics();
+const analytics = createAnalytics({
+  db,
+  // Derived from SAVE_SECRET, so anonymous keys stay stable across restarts.
+  secret: createHmac('sha256', saveSecret.secret).update('analytics-v1').digest('base64url'),
+  log,
+  ...config.analytics,
+});
+const adminOff = adminProblem(config.admin);
+if (adminOff) log.info('admin dashboard is off', { reason: adminOff });
+else if (config.admin.mfa === 'off') log.warn('admin sign-in does not require a one-time code (ADMIN_MFA=off); turn MFA on for production');
+
+const app = createApp(config, { narrator, log, store, signer: createSigner(saveSecret.secret), db, analytics });
 
 /** Addresses other devices on the same network can use. */
 function networkUrls(port) {
@@ -72,6 +110,8 @@ app.server.listen(config.port, config.host, () => {
     node: process.version,
     narrator: narrator.enabled ? config.narrator.model : 'built-in lines',
     rooms: store.persistent ? `saved in ${config.dataDir}` : 'memory',
+    statistics: db.label,
+    admin: adminOff ? 'off' : '/admin',
   });
   if (process.stdout.isTTY) {
     console.log(`\n  Play here:            http://localhost:${port}`);
@@ -102,6 +142,7 @@ async function stop(reason, exitCode = 0) {
   }, FORCE_EXIT_MS).unref();
   try {
     await app.shutdown();
+    await db.close();
     log.info('stopped cleanly');
   } catch (err) {
     log.error('error during shutdown', { err });

@@ -40,6 +40,9 @@ export function securityHeaders(req) {
     'Referrer-Policy': 'no-referrer',
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
     'Cross-Origin-Opener-Policy': 'same-origin',
+    // Keep the game out of search results. Link previews (WhatsApp and others)
+    // are unaffected. This is not access control: anyone with the link can play.
+    'X-Robots-Tag': 'noindex',
   };
   // Only over real HTTPS (see app.js isHttps), so local http://localhost keeps working.
   if (req.isHttps) headers['Strict-Transport-Security'] = 'max-age=15552000';

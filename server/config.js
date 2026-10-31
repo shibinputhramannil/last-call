@@ -52,6 +52,21 @@ function secret(name) {
   return raw;
 }
 
+function databaseUrl(name) {
+  const raw = (process.env[name] || '').trim();
+  if (!raw) return null;
+  // Never echo the value: it contains the database password.
+  if (!/^postgres(ql)?:\/\//.test(raw)) throw new Error(`${name} must be a PostgreSQL connection URL starting with postgres://`);
+  return raw;
+}
+
+function siteVerification(name) {
+  const raw = (process.env[name] || '').trim();
+  if (!raw) return null;
+  if (!/^[A-Za-z0-9_-]{10,100}$/.test(raw)) throw new Error(`${name} must be the content value of Google's verification meta tag`);
+  return raw;
+}
+
 function oneOf(name, options, fallback) {
   const raw = (process.env[name] || '').trim().toLowerCase();
   if (!raw) return fallback;
@@ -76,6 +91,21 @@ export function loadConfig() {
     saveSecret: secret('SAVE_SECRET'),
     roomIdleMs: int('ROOM_IDLE_MINUTES', 30, { min: 1, max: 24 * 60 }) * 60_000,
     roomMaxMs: int('ROOM_MAX_HOURS', 4, { min: 1, max: 72 }) * 3_600_000,
+    // PostgreSQL for statistics and admin sessions (else SQLite in DATA_DIR, else memory).
+    databaseUrl: databaseUrl('DATABASE_URL'),
+    analytics: {
+      retentionDays: int('ANALYTICS_RETENTION_DAYS', 90, { min: 31, max: 3_650 }),
+      rollupDays: int('ANALYTICS_ROLLUP_DAYS', 730, { min: 31, max: 3_650 }),
+    },
+    admin: {
+      username: (process.env.ADMIN_USERNAME || '').trim() || null,
+      passwordHash: (process.env.ADMIN_PASSWORD_HASH || '').trim() || null,
+      totpSecret: (process.env.ADMIN_TOTP_SECRET || '').replace(/\s/g, '') || null,
+      mfa: oneOf('ADMIN_MFA', ['required', 'off'], 'required'),
+      sessionHours: int('ADMIN_SESSION_HOURS', 8, { min: 1, max: 24 }),
+      idleMinutes: int('ADMIN_IDLE_MINUTES', 30, { min: 5, max: 240 }),
+    },
+    googleSiteVerification: siteVerification('GOOGLE_SITE_VERIFICATION'),
     narrator: {
       enabled: bool('ENABLE_AI_NARRATOR') && Boolean(process.env.ANTHROPIC_API_KEY),
       apiKey: process.env.ANTHROPIC_API_KEY || '',
