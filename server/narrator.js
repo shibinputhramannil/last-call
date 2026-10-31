@@ -1,4 +1,4 @@
-// "The Exchange" posts one short atmospheric line into the chat after key moments.
+// "The Exchange" posts one short atmospheric line into the chat after each stage.
 // Hand-written lines are always available. When ENABLE_AI_NARRATOR is on and an
 // ANTHROPIC_API_KEY is set, the line is written by Claude instead. The request
 // never includes answers, clues or player names, and the key stays on the server.
@@ -6,7 +6,7 @@
 import { RateLimiter } from './rateLimit.js';
 
 const LINES = {
-  solved: [
+  stage: [
     'Somewhere below you, a relay that has not moved in sixty years closes with a sigh.',
     'The dust on the switchboard shifts, as if something leaned in to listen.',
     'A dial tone hums through the walls, faint and patient.',
@@ -28,14 +28,14 @@ Stay atmospheric and unsettling but never gory. Do not address the players by na
 Reply with the sentence only.`;
 
 function pickLine(event) {
-  const pool = LINES[event] || LINES.solved;
+  const pool = LINES[event] || LINES.stage;
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-function describe({ event, title, progress }) {
-  if (event === 'won') return 'Event: the players solved the final puzzle and the last call connects.';
-  if (event === 'lost') return 'Event: the players ran out of time and the exchange forgets them.';
-  return `Event: the players just solved the puzzle "${title}" (${progress} of 3 solved).`;
+function describe({ event, title }) {
+  if (event === 'won') return 'Event: the players completed the final stage and the last call connects.';
+  if (event === 'lost') return 'Event: the players ran out of time on a stage and the line goes dead.';
+  return `Event: the players just restored a line by completing the stage "${title}".`;
 }
 
 function tidy(text) {

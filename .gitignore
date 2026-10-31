@@ -6,6 +6,9 @@ node_modules/
 .env.*
 !.env.example
 
+# Saved rooms when DATA_DIR points inside the project
+/data/
+
 # Logs and runtime output
 *.log
 npm-debug.log*

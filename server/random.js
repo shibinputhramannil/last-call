@@ -57,3 +57,13 @@ export function shuffle(rng, items) {
 export function pick(rng, items) {
   return items[rng.int(items.length)];
 }
+
+/** `n` distinct items in random order. */
+export function sample(rng, items, n) {
+  return shuffle(rng, items).slice(0, n);
+}
+
+/** Short random id for a stage run or room seed. */
+export function newId(bytes = 6) {
+  return randomBytes(bytes).toString('base64url');
+}

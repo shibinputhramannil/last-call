@@ -1,15 +1,19 @@
 # Last Call
 
-A two-player co-operative puzzle game for the browser.
+A two-player co-operative puzzle game for the browser. **Play it: <https://last-call-vdui.onrender.com>**
 
-Two players are trapped in the abandoned telephone exchange of Exchange 7. **The Caller** is inside: they see the symbols, lamps and machines. **The Operator** holds the field manual: they know what everything means but can't see any of it. Talk it through and solve three puzzles before the exchange forgets you.
+Exchange 7 closed in 1963, and tonight one of its lines rang anyway. **The Caller** is inside the exchange: they see the symbols, lamps and machines. **The Operator** holds the night staff's field manual: they know what everything means but can't see any of it. Talk it through, restore the lines stage by stage, and connect the last call.
 
-- Real-time rooms with a share link or a 6-character room code, playable across devices
-- Each player's browser only ever receives its own role's clues; answers are checked on the server
-- Built-in chat with delivery status, retry and an offline queue; works alongside a phone or voice call
-- Three hints per role per puzzle, each clearer than the last
-- Atmospheric music and sound generated in the browser, with volume and mute controls
-- Works with keyboard and screen readers, respects reduced-motion settings, and fits phones and desktops
+- A campaign of **200 stages in 10 chapters**, each stage three puzzles, with a story beat for every stage
+- Six puzzle machines (symbol decoding, routing, punched tape, ring patterns, relay sequences and a telegram cipher) that grow harder through the chapters
+- Up to **three stars per stage**, with the score worked out in front of you
+- Real-time rooms with an invite link or a 6-character room code, across devices
+- Each browser only ever receives its own role's clues; every answer is checked on the server
+- Chat with delivery receipts and automatic retries; it keeps unsent messages through drops and reloads
+- Reconnects by itself and resumes the same room, role, stage, puzzle, chat and score
+- Progress is saved in both players' browsers, signed by the server, so it survives server restarts
+- Settings for sound, music, motion, text size, contrast and the manual's typewriter font
+- Keyboard and screen reader support, fits phones and desktops
 
 ## Run it on your computer
 
@@ -38,7 +42,7 @@ To play both roles on one computer, open the invite link in a second browser or 
 | Windows (Command Prompt) | `set PORT=3001 && npm start` |
 | macOS / Linux | `PORT=3001 npm start` |
 
-You can also put settings in a `.env` file (copy `.env.example`); see [Environment variables](#environment-variables).
+You can also put settings in a `.env` file (copy `.env.example`); see [Environment variables](#environment-variables). Locally the server warns that `SAVE_SECRET` is not set; that only matters if you want saved progress to survive restarting your own server.
 
 **If it doesn't start,** the terminal says why and what to do. The usual causes:
 - **Dependencies are not installed.** Run `npm install` once.
@@ -48,41 +52,82 @@ For development, `npm run dev` restarts the server when server files change. The
 
 ## How to play
 
-1. One player chooses **Open a room**, picks a role and a clock, and sends the invite link (or reads out the room code).
-2. The other player opens the link, or types the code under **Join a friend**.
-3. When both of you are on the line, either player presses **Start**. You can swap roles in the lobby first.
+1. On your first visit a short story sets the scene, one page at a time. Use **Next** and **Back**, or **Skip the story**. It won't show again; replay it any time from **Settings**.
+2. One player chooses **Open a room**, picks a role, and sends the invite link (or reads out the room code). The other player opens the link, or types the code under **Join a friend**.
+3. Pick a stage on the **stage map**. Either player can start it once both of you are on the line. You can swap roles between stages.
 
-**The Caller** describes what they see and works the machines: they're the only one who can dial, patch or type an answer.
+**The Caller** describes what they see and works the machines: they're the only one who can dial, patch, flip or type an answer.
 **The Operator** asks questions, looks things up in the manual and gives instructions. The manual has a private notepad.
 
-The puzzles:
+### The machines
 
-| # | Puzzle | Caller sees | Operator has |
-|---|--------|-------------|--------------|
-| 1 | The Dead Line | Four glyph plates, a signal lamp, a rotary dial | A glyph directory and the lamp rules |
-| 2 | The Patch Bay | Ringing lines with lamp colours and stamped shapes, six trunk jacks | A routing grid and the busy-trunk rule |
-| 3 | The Last Call | A punched tape and a labelled reel | The tape code, the reel rule and the staff roster |
+| Machine | Caller sees | Operator has | Gets harder with |
+|---------|-------------|--------------|------------------|
+| The Dead Line | Glyph plates, signal lamps, a rotary dial | A glyph directory and the lamp rules | More plates, blanking plates, a day/night clock, two lamps, look-alike glyphs |
+| The Patch Bay | Ringing lines with lamp colours and stamped shapes, trunk jacks | A routing grid and the routing rules | More calls and trunks, busy trunks, out-of-order trunks, red priority, stepping backwards |
+| The Teleprinter | A punched tape and a labelled reel | The tape code, reel rules and staff roster | Longer names, spacers, upside-down tape, shifted letters |
+| The Party Line | A log of rings, each a pattern of long and short | Whose ring is whose, and the ring-back rules | More households, counting rings, ignoring echoes, trunk rings counting twice |
+| The Relay Rack | Coloured relays, up or down, and fault lamps | A job for each fault lamp | More relays and lamps, jobs that depend on the rack "right now", conditions |
+| The Cipher Wheel | An enciphered telegram, its stamps, a wheel's pointer | The wheel key table, cipher rules and codebook | Bigger shifts, stamps that add to the shift, alternating directions |
 
-Each room gets freshly randomised puzzles, so answers can't be shared between games.
+Every room gets freshly generated puzzles, so answers can't be shared between games.
 
-**Clock.** In a timed game you have 25 minutes. Each wrong answer costs 30 seconds. From the second wrong attempt on a puzzle, the exchange also tells you how much was right (for example "2 of 4 relays held"). Choose **No clock** for a relaxed game. If either player disconnects, the clock is held until both are back.
+### Stages, chapters and progress
 
-**Hints.** Each player has three hints per puzzle, written for their own role. The first is available at once. Each later one unlocks 30 seconds after the previous one, so you try talking it through first. Your partner sees that you read a hint, but not what it said.
+- A stage is **three puzzles**. Solve all three and the stage is restored: you get your stars and score, then **Continue** to the next stage, **Replay** for a better score, or go back to the **stage map**.
+- Stages unlock in order: restoring a stage opens the next one. Each chapter has twenty stages and ends with a finale, its hardest stage. The campaign's ending comes only after the final stage, 10-20.
+- New machines arrive chapter by chapter, starting gently. Later chapters add rules on top of rules rather than guesswork: everything you need is always on one of the two screens.
+- **Progress is saved for you.** The server signs your team's progress (stars and best score for every stage) and gives it to both browsers. When you open or join a room later, the room starts from whichever of you has got furthest.
 
-**Keyboard.** Everything works without a mouse. On the rotary dial you can also type digits, use Backspace to remove one, and press Enter to connect. In chat, Enter sends and Shift+Enter adds a new line.
+### Scoring and stars
 
-**If the connection drops,** the game keeps your seat and reconnects by itself.
-- **Short drop:** after a few seconds a banner explains what's happening, counts down to the next attempt, and offers **Try now**.
-- **Server restarted:** the room is gone (see [Known limitations](#known-limitations)), so the game takes you back to the start with an explanation. Open a new room and send your partner the new link.
+Every stage starts at **1000 points**:
+
+| What | Cost |
+|------|------|
+| Time beyond the stage's par time | 1 point per 2 seconds, at most 300 |
+| Each wrong answer | 60 points, at most 300 |
+| Each hint read (by either of you) | 40 points, at most 300 |
+
+A score never drops below 100. **★★★ Excellent** is 850 or more, **★★ Good** is 600 to 849, and **★ Completed** is any finished stage. The results screen shows the arithmetic for every stage.
+
+Only fair things count. The stage clock **stops whenever either player is disconnected** and during the change-over after each solved puzzle, so a network drop, a slow device, or the motion setting never costs points.
+
+**Stage countdown.** Choose **Relaxed** (no countdown) or **Countdown** when you open a room, or in the lobby. With the countdown on, each stage has a time limit of about twice its par, wrong answers take 30 seconds off it, and if it runs out the stage fails and you can retry it with new puzzles. Stars work the same way in both modes.
+
+**Hints.** Each player has three hints per puzzle, written for their own role, each clearer than the last. The first is available at once; each later one unlocks 30 seconds after the previous one. Your partner sees that you read a hint, but not what it said. From the second wrong attempt on a puzzle, the exchange also tells you how much was right (for example "2 of 4 relays held").
+
+### Settings
+
+The brass knob in the bottom-left corner opens **Settings** (on phones in a room it sits in the chat bar, so it never covers the game). It works with the keyboard: Tab through it and press Escape to close.
+
+- **Sound:** mute, overall volume, music and sound effects. Nothing plays until you first click or press a key.
+- **Motion:** match your device, reduce motion, or full motion.
+- **Reading:** standard, large or larger text; higher contrast; and the typewriter font in the manual (turn it off for a plainer font).
+- **Story:** replay the opening.
+
+Settings are kept in your browser.
+
+**Keyboard.** Everything works without a mouse. On the rotary dial you can type digits, use Backspace to remove one, and press Enter to connect. On the stage map, arrow keys move between stages. In chat, Enter sends and Shift+Enter adds a new line.
+
+### If the connection drops
+
+The game is built so that drops are calm and nothing is lost.
+
+- **Connected, Reconnecting, Offline.** The status at the top tells you which. A blip shorter than a second and a half is never shown at all; after ten seconds a banner explains what is happening and offers **Try now**.
+- **Your partner** sees "reconnecting" during a short drop, and nothing is posted in the chat. Only a drop longer than 8 seconds is announced, and the stage clock is held either way.
+- **Reconnecting** happens by itself, almost at once for the first try, then backing off up to 15 seconds, and straight away when your network or the tab comes back.
+- **Everything comes back:** the same room, role, stage, puzzle, chat history, score and progress, after a drop or a page reload.
+- **Messages** you send while disconnected wait and go as soon as you are back. Each one is confirmed by the server; if a confirmation doesn't arrive, the game re-sends it automatically, and the server never posts a message twice. Unsent messages and your half-typed draft survive reloading the page.
+- **If the server restarts** (for example after an update), players see "The game server is restarting" and their browsers reconnect when it is back. See [Persistence](#persistence) for exactly what is kept.
 
 ## Deploy for public play
 
-Last Call is **one app on one server**. A single Node process serves the page, the room API and the WebSocket. Rooms live in that process's memory, so:
+Last Call is **one app on one server**. A single Node process serves the page, the room API and the WebSocket.
 
-- **Run exactly one instance.** Don't turn on autoscaling or add instances: players on different instances would never find each other's rooms.
-- **A restart or redeploy ends games in progress.** Players are told the server restarted and can open a new room straight away.
+- **Run exactly one instance.** Don't turn on autoscaling or add instances: players on different instances would not find each other's rooms.
 
-The repository is set up for **[Render](https://render.com)** through [`render.yaml`](render.yaml). It describes one web service on Render's free plan, with these settings:
+The repository is set up for **[Render](https://render.com)** through [`render.yaml`](render.yaml). It describes one web service on Render's free plan:
 
 | Setting | Value |
 |---------|-------|
@@ -90,7 +135,7 @@ The repository is set up for **[Render](https://render.com)** through [`render.y
 | Start command | `npm start` |
 | Health check | `/healthz` |
 | Node version | `.node-version` (24) |
-| Environment | `TRUST_PROXY=1`, `CLIENT_IP_HEADER=cf-connecting-ip`, `LOG_LEVEL=info`, narrator off |
+| Environment | `TRUST_PROXY=1`, `CLIENT_IP_HEADER=cf-connecting-ip`, `LOG_LEVEL=info`, `SAVE_SECRET` (generated by Render), narrator off |
 | Auto-deploy | every push to `main`, after the GitHub CI checks pass |
 
 ### First deployment (about 5 minutes)
@@ -101,13 +146,29 @@ The repository is set up for **[Render](https://render.com)** through [`render.y
 4. Wait for the first deploy to finish (a few minutes). The service page shows your public address, such as `https://last-call-xxxx.onrender.com`.
 5. Check it: open `https://<your-address>/healthz` and look for `"status":"ok"`. Then open the address itself, open a room, and join from a second device.
 
-To use your own domain, add it under the service's **Settings > Custom Domains**. Render provides the HTTPS certificate.
+**Already deployed before `SAVE_SECRET` existed?** A Blueprint picks up the new variable on its next sync. Check the service's **Environment** tab: if `SAVE_SECRET` is missing, add it yourself with 32 or more random characters (see `.env.example` for a one-line generator). Without it the game still works, but saved progress and room tickets stop verifying after each restart.
+
+To use your own domain, add it under the service's **Settings > Custom Domains** and set `PUBLIC_URL` to the new address, so share previews use it.
+
+### Persistence
+
+What survives a restart or redeploy depends on two settings:
+
+| Setup | Campaign progress and best scores | Room, roles and code | Chat and the stage in progress |
+|-------|-----------------------------------|----------------------|--------------------------------|
+| `SAVE_SECRET` set (the Render default) | Kept: restored from both players' browsers | Kept: rebuilt from the players' signed tickets when they reconnect | Lost: the stage restarts with new puzzles |
+| `SAVE_SECRET` and `DATA_DIR` on a persistent disk | Kept | Kept | Kept, including the stage clock |
+| Neither | Kept only until the server restarts | Lost | Lost |
+
+- **`SAVE_SECRET`** signs the progress and the room tickets that browsers keep. Browsers can't edit or forge them. Keep it stable: changing it makes every saved game unreadable. If it is not set but `DATA_DIR` is, the server creates one and keeps it in `DATA_DIR`.
+- **`DATA_DIR`** saves each room as a small JSON file (written a moment after each change, and on shutdown) and reloads them at start-up. On Render this needs a **paid instance with a persistent disk**: uncomment the `disk` block and `DATA_DIR` in `render.yaml`. A disk turns off Render's zero-downtime deploys. On Fly.io, use a volume; on your own server, any writable folder.
+- Rooms still close after `ROOM_IDLE_MINUTES` with nobody connected, and after `ROOM_MAX_HOURS` in any case. Your progress stays in your browser either way.
 
 ### Free or paid plan
 
 The free plan costs nothing, but:
-- **It sleeps** after 15 minutes without players. The next visitor waits about a minute while it wakes, and any rooms from before it slept are gone.
-- **Render may restart free services at any time**, which also ends games in progress.
+- **It sleeps** after 15 minutes without players (messages over an open WebSocket count as activity, so a game in progress keeps it awake). The next visitor waits about a minute while it wakes.
+- **Render may restart free services at any time.** With `SAVE_SECRET` set, players reconnect into a rebuilt room with their progress intact.
 
 For an always-on server, change `plan: free` to `plan: starter` in `render.yaml` (or pick an instance type in the dashboard). Starter is a paid plan.
 
@@ -125,28 +186,29 @@ Static hosts (GitHub Pages, plain Netlify or Vercel sites) and serverless functi
 - **Health check.** `GET /healthz` (or `HEAD`) returns `200` with `{"status":"ok","uptimeSeconds":…,"rooms":…,"players":…}`. Use `players` to see whether anyone is mid-game before you redeploy.
 - **Shutdown.** On `SIGTERM` (sent by hosts before stopping or replacing the server) or Ctrl+C, the server:
   1. switches to draining: `/healthz` returns `503`, and new rooms, joins and connections are refused with "the server is restarting";
-  2. tells every connected player that their room closed because the server is restarting;
-  3. closes all connections and exits, usually within a second, with a 10-second hard limit.
+  2. pauses every stage clock and saves every room (with `DATA_DIR`);
+  3. tells every connected player it is restarting, so their browsers keep reconnecting instead of giving up;
+  4. closes all connections and exits, usually within a second, with a 10-second hard limit.
 
 ### Logs
 
 The server writes one line per event to standard output, for example:
 
 ```
-2026-10-31T09:12:03.477Z INFO  Last Call is running port=10000 node=v24.11.0 narrator="built-in lines"
-2026-10-31T09:14:40.002Z INFO  room opened room=K7QM3X mode=timed rooms=1
+2026-10-31T09:12:03.477Z INFO  Last Call is running port=10000 node=v24.11.0 narrator="built-in lines" rooms=memory
+2026-10-31T09:14:40.002Z INFO  room opened room=K7QM3X mode=untimed rooms=1
+2026-10-31T09:20:15.310Z INFO  room rebuilt from ticket room=K7QM3X rooms=1
 2026-10-31T09:41:12.950Z INFO  room closed room=K7QM3X reason=idle rooms=0
-2026-10-31T10:02:00.118Z INFO  shutting down reason=SIGTERM rooms=2 players=3
 ```
 
 - **Where to read them:** on Render, the service's **Logs** tab. Locally, the terminal.
-- **What's logged:** rooms opening and closing, start-up and shutdown, and errors with their stack traces.
-- **What's never logged:** chat messages, player names or seat tokens.
+- **What's logged:** rooms opening, closing and being restored, start-up and shutdown, and errors with their stack traces.
+- **What's never logged:** chat messages, player names, seat tokens or secrets.
 - **Detail level:** set `LOG_LEVEL` to `debug`, `info`, `warn` or `error`.
 
 ### Redeploying
 
-- **Normal path:** push to `main`. GitHub Actions runs the lint and tests, and Render deploys only once they pass. Each deploy restarts the server and ends games in progress, so prefer quiet times (check `players` on `/healthz`).
+- **Normal path:** push to `main`. GitHub Actions runs the lint and tests, and Render deploys only once they pass. Players in a game see "restarting" and reconnect; see [Persistence](#persistence) for what they keep.
 - **Manually:** on the Render service page, choose **Manual Deploy > Deploy latest commit**.
 - **To roll back:** open **Events** and choose **Rollback** on an earlier deploy.
 - **To change settings:** use the service's **Environment** tab. Saving redeploys the service.
@@ -157,13 +219,13 @@ Any host that runs one long-lived Node process with WebSockets works.
 - **Build:** `npm ci --omit=dev`
 - **Start:** `npm start`
 - **Health check:** `/healthz`
-- **Settings:** set `TRUST_PROXY=1` behind the host's proxy (plus `CLIENT_IP_HEADER` if the host provides a trustworthy client-IP header), and keep it to one instance.
+- **Settings:** set `TRUST_PROXY=1` behind the host's proxy (plus `CLIENT_IP_HEADER` if the host provides a trustworthy client-IP header), set `SAVE_SECRET` and `PUBLIC_URL`, and keep it to one instance.
 
-**Railway.** Deploy from the repository and set `TRUST_PROXY=1`.
+**Railway.** Deploy from the repository and set `TRUST_PROXY=1`, `SAVE_SECRET` and `PUBLIC_URL`. Add a volume and `DATA_DIR` for full persistence.
 
-**Fly.io.** Run `fly launch`, keep one machine (`fly scale count 1`), and set `TRUST_PROXY=1`.
+**Fly.io.** Run `fly launch`, keep one machine (`fly scale count 1`), and set `TRUST_PROXY=1`, `CLIENT_IP_HEADER=fly-client-ip`, `SAVE_SECRET` and `PUBLIC_URL`. Mount a volume and set `DATA_DIR` to it for full persistence.
 
-**Your own server** behind nginx. Run the app under a process manager such as systemd or pm2, and pass WebSocket upgrades through:
+**Your own server** behind nginx. Run the app under a process manager such as systemd or pm2, set `DATA_DIR` to a folder the app can write, and pass WebSocket upgrades through:
 
 ```nginx
 location / {
@@ -178,12 +240,35 @@ location / {
 }
 ```
 
+## Sharing and link previews
+
+Sending the game's address, or a room invite link (`…/?room=K7QM3X`), in WhatsApp, iMessage, Slack or social apps shows a preview with the Last Call poster, a title and a short description.
+
+- The preview tags (`og:title`, `og:description`, `og:image` and its size and alt text, `og:url`, and Twitter card tags) are in the page's first HTML response, filled in by the server. Link-preview crawlers don't run JavaScript, so nothing depends on it.
+- The poster is [`public/og/last-call-poster-v1.jpg`](public/og/last-call-poster-v1.jpg): 1200 × 630 JPEG, about 80 KB (WhatsApp tends to drop images over about 300 KB). Its address is absolute, built from `PUBLIC_URL`, or Render's `RENDER_EXTERNAL_URL`, or the request's own host.
+- Invite links share the same poster and say which room you're invited to; opening one still opens that room's join screen.
+
+**Check a preview** from a terminal (replace the address):
+
+```bash
+curl -s -A "WhatsApp/2.24" "https://last-call-vdui.onrender.com/?room=K7QM3X" | grep -E 'og:|twitter:'
+curl -sI "https://last-call-vdui.onrender.com/og/last-call-poster-v1.jpg"   # expect 200 and image/jpeg
+```
+
+Or paste the address into a preview checker such as <https://www.opengraph.xyz> or Meta's Sharing Debugger (<https://developers.facebook.com/tools/debug/>).
+
+**Changing the poster or the text.** Apps cache previews per address, often for days, and WhatsApp has no public refresh button.
+1. Never overwrite the poster in place: save the new image under a new name (`last-call-poster-v2.jpg`) and update both image tags in `public/index.html`. The poster's source is [`tools/og-poster.html`](tools/og-poster.html); open it in a browser at 1200 × 630 and screenshot it as a JPEG.
+2. Ask Meta's Sharing Debugger to **Scrape Again** for the game's address; WhatsApp usually follows within a day.
+3. To see the new preview at once, share the address with something new on the end, such as `https://last-call-vdui.onrender.com/?v=2`. Room links are new addresses every time, so they always pick up the current preview.
+4. On the free plan, a sleeping server can take about a minute to answer a crawler, which may time out and show no preview. Open the game yourself first to wake it.
+
 ## Environment variables
 
 All are optional.
 - **Locally:** copy `.env.example` to `.env`; the server reads it on start.
 - **On a host:** set them in the dashboard.
-- **Secrets:** never commit `.env` or a real API key. `.env` is git-ignored, and `.env.example` holds placeholders only.
+- **Secrets:** never commit `.env`, a real API key or a real `SAVE_SECRET`. `.env` is git-ignored, and `.env.example` holds placeholders only.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -191,6 +276,9 @@ All are optional.
 | `HOST` | `0.0.0.0` | Bind address. |
 | `TRUST_PROXY` | `false` | Set to `1` behind a reverse proxy or a platform like Render, Railway or Fly. Rate limits then see real client IPs (the last `X-Forwarded-For` entry), and HTTPS is detected. Leave it off when nothing sits in front of the server, or clients could spoof their IP. |
 | `CLIENT_IP_HEADER` | none | With `TRUST_PROXY=1`: a header that holds the real client IP and that clients can't forge through your proxy. Use `cf-connecting-ip` on Render (which sits behind Cloudflare; `render.yaml` sets it) or `fly-client-ip` on Fly.io. Unset means the last `X-Forwarded-For` entry is used. |
+| `PUBLIC_URL` | `RENDER_EXTERNAL_URL`, else the request's host | Public address for share previews, e.g. `https://last-call.example.com`. |
+| `SAVE_SECRET` | random per start | Signs saved progress and room tickets kept by browsers. 16+ characters; keep it stable. See [Persistence](#persistence). |
+| `DATA_DIR` | none | Folder for saved rooms, on a persistent disk. See [Persistence](#persistence). |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 | `ALLOWED_ORIGINS` | none | Extra comma-separated origins allowed to open the game's WebSocket. The page's own origin is always allowed. |
 | `ROOM_IDLE_MINUTES` | `30` | Close a room after this long with nobody connected. |
@@ -201,11 +289,11 @@ All are optional.
 
 ### Optional: the Claude narrator
 
-After each solved puzzle and at the end of a game, "The Exchange" posts one short, eerie line in the chat. By default these lines come from a built-in set, and the game needs no API key.
+After each restored stage and at the end of the campaign, "The Exchange" posts one short, eerie line in the chat. By default these lines come from a built-in set, and the game needs no API key.
 
 To have Claude write them instead, set both `ENABLE_AI_NARRATOR=true` and `ANTHROPIC_API_KEY` on the server.
 
-- **What's sent:** only the event (for example "solved The Patch Bay, 2 of 3"). Never answers, clues, player names or chat.
+- **What's sent:** only the event (for example "completed the stage Lamp Test"). Never answers, clues, player names or chat.
 - **Safeguards:** calls are capped at 30 per minute across the server. If a call fails, times out or is declined, the built-in line is used.
 - **Model:** it runs on `claude-opus-5-5` at low effort, with the API's refusal fallback switched on. Set `ANTHROPIC_MODEL` to use a different model.
 
@@ -215,49 +303,78 @@ The key is read from the environment on the server and is never sent to browsers
 
 ```bash
 npm run lint    # ESLint over server, client and tests
-npm test        # node:test: puzzles, game rules, rooms, health and shutdown, two-client WebSocket session
+npm test        # node:test suites (below)
 npm run check   # both
 ```
+
+The tests cover:
+- **Every one of the 200 stages,** each generated with several seeds: an independent solver works out the answer using only the Caller's and the Operator's views, and the server must accept it. Each role's view is checked for the other role's clues and for the answer.
+- **The campaign's structure:** at least 200 stages, no two with the same mix of puzzles, difficulty rising chapter by chapter, and each finale the hardest stage of its chapter.
+- **Each mechanic's rules,** case by case, and that every rule in a manual actually matters on its board.
+- **Scoring and stars,** progress and unlocking, and that signed saves can't be forged.
+- **The game:** stage runs, the fair clock, transitions, hints, countdowns, and saving and restoring a run mid-puzzle.
+- **Rooms:** presence and the quiet grace period for drops, chat delivery and de-duplication, Continue and stage picks pressed by both players at once, simultaneous reconnects, and restarts with and without `DATA_DIR`.
+- **The browser's connection layer,** in Node with a fake WebSocket: one socket at a time, close reasons that never leak between sockets, backoff, dead-socket detection, and no false alarms after a sleeping tab wakes.
+- **Two real WebSocket clients** playing a whole stage, dropping and reconnecting, plus the share-preview tags, health check, graceful shutdown and rate limits.
 
 There is no build step: the browser loads the files in `public/` and `shared/` as they are. GitHub Actions runs `npm run check` on every push to `main` and on pull requests ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
 ## How it works
 
 ```
-public/           Browser client (plain HTML, CSS and ES modules, no build step)
-  js/main.js      Screens, room flow, timer, hints, connection banner, end of game
-  js/net.js       Room API calls and the self-reconnecting WebSocket
-  js/chat.js      Chat panel: pending, failed and queued messages, retries
-  js/caller.js    The Caller's machines (dial, patch bay, teleprinter)
-  js/manual.js    The Operator's field manual
-  js/audio.js     Procedural music and sound effects (Web Audio)
-shared/           Code used by both sides: room-code rules, glyph and stamp artwork
+public/             Browser client (plain HTML, CSS and ES modules, no build step)
+  index.html        The page; the server fills in its share-preview tags
+  js/main.js        Screens, room flow, connection status, stage clock, hints
+  js/net.js         Room API calls and the self-reconnecting WebSocket
+  js/heartbeat-worker.js  Heartbeat ticks that keep going in background tabs
+  js/chat.js        Chat panel: receipts, automatic re-sends, queued and saved messages
+  js/story.js       The opening story
+  js/map.js         The stage map
+  js/result.js      Stage results, scores and stars
+  js/caller.js      The Caller's machines
+  js/manual.js      The Operator's field manual
+  js/settings.js    The Settings panel
+  js/audio.js       Procedural music and sound effects (Web Audio)
+  og/               The share-preview poster
+shared/             Code used by both sides
+  campaign.js       Chapters, mechanics, and the 200-stage campaign (versioned format)
+  story.js          The opening, chapter texts, and every stage's title and story beat
+  scoring.js        How scores and stars are worked out
+  art.js            Glyph, stamp, cap and cadence artwork (pictures only, never meanings)
+  constants.js      Room-code rules and limits
 server/
-  index.js        Entry point: start-up checks, logging, graceful shutdown
-  app.js          HTTP API, health check, static files, WebSocket handling, rate limits
-  rooms.js        Rooms, seats, reconnection, chat history, expiry
-  game.js         Game state, timer, answer checking, hint pacing
-  puzzles/        One module per puzzle: generation, role views, answer check, hints
-  narrator.js     Optional Claude-written atmosphere lines
-  logger.js       One-line timestamped logs
-test/             Node test runner suites (unit, lifecycle and two-client integration)
-render.yaml       Render Blueprint (one web service)
+  index.js          Entry point: start-up checks, logging, graceful shutdown
+  app.js            HTTP API, the page with share tags, health check, WebSocket, rate limits
+  rooms.js          Rooms, seats, presence, reconnection, chat, restarts, expiry
+  game.js           A stage run: puzzles, the fair clock, answers, hints, results
+  progress.js       A team's campaign progress
+  signing.js        Signed saves and room tickets
+  store.js          Room persistence (DATA_DIR) and the signing secret
+  puzzles/          One module per mechanic: levels, generation, role views, answer check, hints
+  narrator.js       Optional Claude-written atmosphere lines
+tools/og-poster.html  Source of the share poster
+test/               Node test runner suites
+render.yaml         Render Blueprint (one web service)
 ```
 
-**The server is the authority.** It generates each puzzle, keeps the answers, and sends each player a view built only for their role. The Caller's browser never receives the manual, and the Operator's browser never receives the machine data. Neither receives an answer. Each puzzle module defines its views, answer check and hints together, so the clues, the validation and the hints can't drift apart. The tests check this for hundreds of random puzzles.
+**The server is the authority.** It generates each puzzle, keeps the answers, and sends each player a view built only for their role. The Caller's browser never receives the manual, and the Operator's browser never receives the machine data. Neither receives an answer. Each mechanic defines its views, answer check and hints together, so the clues, the validation and the hints can't drift apart.
+
+**Campaign data.** `shared/campaign.js` holds an authored plan for each chapter: which mechanics appear and at which levels. The twenty stages of each chapter are derived from that plan deterministically: they follow a rising difficulty curve, never repeat a combination used anywhere in the campaign, and save the chapter's hardest stage for its finale. Each stage's title and story beat are written by hand in `shared/story.js`. Stage data is versioned (`STAGE_FORMAT`, `CAMPAIGN_VERSION`); to add a chapter, add its story and plan, and to add a mechanic, add it to `MECHANICS`, a module in `server/puzzles/` and a renderer for each role. `validateCampaign()` runs in the tests.
 
 **Rooms and seats.**
 - **Room codes** are 6 random characters from an alphabet without look-alikes (no I, L, O, 0 or 1).
 - **Seat tokens.** Joining gives your browser a random 128-bit seat token. It's kept in `localStorage`, so a reload or a dropped connection puts you straight back in your seat.
+- **Room tickets.** The server also gives each seat a signed ticket (room code, role, and a fingerprint of the seat token, never the token itself). After a restart without saved rooms, the first player to reconnect rebuilds the room from their ticket, and their partner's ticket puts them back in the other seat.
 - **Taking over a seat.** If a player has been gone for more than 20 seconds, someone joining with the code can take their seat.
 - **Another tab.** Opening the same seat in a second tab moves the connection there, and the first tab says so.
 
-**Reconnection.** The client reconnects on its own, backing off from about half a second up to 10 seconds. It also reconnects straight away when the network or the tab comes back. Chat messages sent while offline wait in a queue and are sent on reconnect. The server ignores duplicate retries.
-
 **Detecting dead connections.**
-- **The browser** sends an app-level ping every 15 seconds. If a ping gets no reply within 10 seconds, it drops the connection and reconnects.
-- **The server** drops a connection after 90 seconds without any message. It doesn't rely on WebSocket ping frames alone, because some hosting proxies (including Render's) answer those themselves even after the player has gone.
-- **The 90-second limit** leaves room for background tabs, whose timers browsers may slow to once a minute.
+- **The browser** sends an app-level ping every 15 seconds, timed by a Web Worker so it keeps going in background tabs. If a ping gets no reply within 10 seconds, it drops the connection and reconnects. If the page was asleep (a frozen or throttled tab), it re-tests the line with a fresh ping instead of declaring it dead.
+- **The browser keeps one socket at a time.** A retry never opens a second socket while one is connecting or saying hello, and each socket's close reason belongs to that socket alone. (Both of these used to cause repeated "connection lost" messages.)
+- **The server** drops a connection after 70 seconds without any message. It doesn't rely on WebSocket ping frames alone, because some hosting proxies (including Render's) answer those themselves even after the player has gone.
+- **Presence.** A drop pauses the stage clock at once, but is announced to the partner only after 8 seconds.
+
+**Consistency.** The server handles one message at a time. Stage starts, Continue and Back to the map name the run or result they refer to, so when both players press at once the first press wins and the second does nothing. State updates carry a revision number, and every reconnect starts from a full snapshot.
 
 **Expiry.**
 - A room closes after `ROOM_IDLE_MINUTES` with nobody connected, and in any case after `ROOM_MAX_HOURS`.
@@ -269,13 +386,13 @@ render.yaml       Render Blueprint (one web service)
   - code lookups and joins: 40 per IP every 5 minutes
   - WebSocket connections: 30 per IP per minute, at most 12 open at once
   - messages per socket, chat per player, and answer attempts are throttled too
-- **Message sizes:** WebSocket messages are capped at 8 KB, chat messages at 400 characters, and names at 20.
-- **Input cleaning:** control and bidi-override characters are stripped. Chat is always rendered as text, never HTML.
-- **Headers:** responses carry a strict Content-Security-Policy, `Referrer-Policy: no-referrer` (so room codes in URLs never leak), `X-Frame-Options: DENY` and `nosniff`. WebSocket connections from other sites are refused.
+- **Message sizes:** WebSocket messages are capped at 16 KB, request bodies at 16 KB, chat messages at 400 characters, and names at 20.
+- **Input cleaning:** control and bidi-override characters are stripped. Chat is always rendered as text, never HTML. Room codes in share tags are validated and escaped.
+- **Headers:** responses carry a strict Content-Security-Policy (no inline scripts or styles), `Referrer-Policy: no-referrer` (so room codes in URLs never leak), `X-Frame-Options: DENY` and `nosniff`. WebSocket connections from other sites are refused.
 
 ## Known limitations
 
-- Rooms are in memory: a server restart, redeploy or free-plan sleep ends games in progress. Players are told what happened and can open a new room.
-- One instance only, for the same reason.
+- One instance only: a second server process would not see the first one's rooms.
+- Without `DATA_DIR`, a restart keeps progress, rooms and seats, but a stage in progress starts again with new puzzles, and the chat history is lost.
 - There's no built-in voice chat. Players who want to talk can use a phone or voice call alongside the in-game chat.
 - One seat per browser profile per room. Use a second browser or a private window to play both roles on one machine.

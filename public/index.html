@@ -1,10 +1,25 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-motion="full">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Last Call</title>
-    <meta name="description" content="A two-player puzzle game. One of you is trapped in an abandoned telephone exchange; the other holds the manual." />
+    <meta name="description" content="{{SHARE_DESCRIPTION}}" />
+    <!-- Share previews (WhatsApp, iMessage, Slack, social). The server fills in absolute URLs. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Last Call" />
+    <meta property="og:title" content="{{SHARE_TITLE}}" />
+    <meta property="og:description" content="{{SHARE_DESCRIPTION}}" />
+    <meta property="og:url" content="{{SHARE_URL}}" />
+    <meta property="og:image" content="{{ORIGIN}}/og/last-call-poster-v1.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="The Last Call wordmark in glowing amber lettering between two dark switchboards of lit lamps, joined by a red patch cord." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="{{SHARE_TITLE}}" />
+    <meta name="twitter:description" content="{{SHARE_DESCRIPTION}}" />
+    <meta name="twitter:image" content="{{ORIGIN}}/og/last-call-poster-v1.jpg" />
     <meta name="theme-color" content="#1c1411" />
     <meta name="color-scheme" content="dark" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
@@ -13,7 +28,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:ital,wght@0,400;0,600;0,700;1,400&family=Big+Shoulders+Display:wght@700;900&family=Courier+Prime:ital,wght@0,400;0,700;1,400&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:ital,wght@0,400;0,600;0,700;1,400&family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=Lilita+One&display=swap"
     />
     <link rel="stylesheet" href="/css/styles.css" />
     <script type="module" src="/js/main.js"></script>
@@ -21,72 +36,106 @@
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
 
-    <!-- Opening -->
-    <section id="screen-intro" class="intro" aria-labelledby="intro-title">
-      <button class="intro-skip btn-text" type="button">Skip intro</button>
-      <div class="intro-stage">
-        <div class="intro-lamp" aria-hidden="true"></div>
-        <p class="intro-line intro-line-1">Exchange 7 closed in 1963.</p>
-        <p class="intro-line intro-line-2">Two of its lines are still open.</p>
-        <h1 id="intro-title" class="title-plate"><span>Last</span> <span>Call</span></h1>
-        <p class="intro-tag">A puzzle game for two: one Caller trapped inside, one Operator holding the manual.</p>
-        <div class="intro-actions">
-          <button class="btn btn-lamp intro-enter" type="button">Pick up the receiver</button>
-          <p class="intro-note">Sound starts when you pick up. Headphones help.</p>
-        </div>
+    <!-- The wordmark, drawn once and reused. Presentation attributes keep it right inside <use>. -->
+    <svg class="sprite" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="wm-face" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#fff0c2" />
+          <stop offset="0.42" stop-color="#ffc24f" />
+          <stop offset="1" stop-color="#e5781d" />
+        </linearGradient>
+        <linearGradient id="wm-side" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#9b5420" />
+          <stop offset="1" stop-color="#5b2b10" />
+        </linearGradient>
+        <radialGradient id="wm-lamp" cx="0.4" cy="0.35" r="0.65">
+          <stop offset="0" stop-color="#fff6d8" />
+          <stop offset="0.45" stop-color="#ffbe4a" />
+          <stop offset="1" stop-color="#d9661a" />
+        </radialGradient>
+        <symbol id="wordmark-stacked" viewBox="0 0 640 360">
+          <g font-family="'Lilita One', 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" text-anchor="middle" stroke-linejoin="round" paint-order="stroke fill">
+            <g transform="rotate(-5 320 120)">
+              <text x="320" y="150" font-size="150" fill="url(#wm-side)" stroke="#2a1309" stroke-width="22" transform="translate(0 11)">LAST</text>
+              <text x="320" y="150" font-size="150" fill="url(#wm-face)" stroke="#2a1309" stroke-width="13">LAST</text>
+              <text x="320" y="150" font-size="150" fill="none" stroke="#fff4d6" stroke-opacity="0.55" stroke-width="2.5" transform="translate(-2 -3)">LAST</text>
+            </g>
+            <text x="320" y="300" font-size="196" fill="url(#wm-side)" stroke="#2a1309" stroke-width="24" transform="translate(0 13)">CALL</text>
+            <text x="320" y="300" font-size="196" fill="url(#wm-face)" stroke="#2a1309" stroke-width="14">CALL</text>
+            <text x="320" y="300" font-size="196" fill="none" stroke="#fff4d6" stroke-opacity="0.55" stroke-width="2.5" transform="translate(-2 -3)">CALL</text>
+          </g>
+          <path d="M120 338c12-16 26 14 38 0s26 14 38 0 26 14 38 0 26 14 38 0 26 14 38 0 26 14 38 0 26 14 38 0 26 14 38 0" fill="none" stroke="#2a1309" stroke-width="11" stroke-linecap="round" />
+          <path d="M120 338c12-16 26 14 38 0s26 14 38 0 26 14 38 0 26 14 38 0 26 14 38 0 26 14 38 0 26 14 38 0 26 14 38 0" fill="none" stroke="#c9a25a" stroke-width="5" stroke-linecap="round" />
+          <circle cx="520" cy="338" r="15" fill="url(#wm-lamp)" stroke="#2a1309" stroke-width="5" />
+        </symbol>
+        <symbol id="wordmark-inline" viewBox="0 0 420 84">
+          <g font-family="'Lilita One', 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="66" stroke-linejoin="round" paint-order="stroke fill">
+            <text x="10" y="64" fill="url(#wm-side)" stroke="#2a1309" stroke-width="12" transform="translate(0 5)">LAST CALL</text>
+            <text x="10" y="64" fill="url(#wm-face)" stroke="#2a1309" stroke-width="7">LAST CALL</text>
+          </g>
+        </symbol>
+      </defs>
+    </svg>
+
+    <!-- Opening story, page by page -->
+    <section id="screen-story" class="story" aria-labelledby="story-heading" hidden>
+      <h1 id="story-heading" class="sr-only">Last Call: the story so far</h1>
+      <div class="story-lamp" id="story-lamp" aria-hidden="true"></div>
+      <div class="story-page" id="story-page" aria-live="off"></div>
+      <ol class="story-dots" id="story-dots" role="img"></ol>
+      <div class="story-controls">
+        <button class="btn" id="story-back" type="button">Back</button>
+        <button class="btn btn-lamp" id="story-next" type="button">Next</button>
+        <button class="btn-text story-skip" id="story-skip" type="button">Skip the story</button>
       </div>
     </section>
 
     <div id="shell" class="shell" hidden>
       <header class="topbar" aria-label="Game status">
-        <div class="brand" aria-hidden="true">Last Call</div>
+        <svg class="brand" viewBox="0 0 420 84" role="img" aria-label="Last Call"><use href="#wordmark-inline" /></svg>
 
-        <ol class="progress" id="progress" aria-label="Puzzles" hidden></ol>
+        <div class="stage-indicator" id="stage-indicator" hidden>
+          <span class="stage-indicator-ref" id="stage-indicator-ref"></span>
+          <ol class="puzzle-lamps" id="puzzle-lamps" aria-label="Puzzles in this stage"></ol>
+        </div>
 
         <div class="timer" id="timer" hidden>
-          <span class="timer-label" id="timer-label">Time left</span>
-          <span class="timer-value" id="timer-value" role="timer" aria-labelledby="timer-label">25:00</span>
+          <span class="timer-label" id="timer-label">Stage clock</span>
+          <span class="timer-value" id="timer-value" role="timer" aria-labelledby="timer-label">0:00</span>
         </div>
 
-        <div class="status" id="conn-status" role="status" hidden>
-          <span class="lamp-dot" aria-hidden="true"></span>
-          <span class="status-text">Connecting</span>
-        </div>
-
-        <div class="audio" id="audio-controls">
-          <button class="icon-btn" id="mute-btn" type="button" aria-pressed="false" aria-label="Mute sound">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path class="spk" d="M4 9h4l5-4v14l-5-4H4z" /><path class="wave" d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11" /><path class="cross" d="M16 9l6 6M22 9l-6 6" /></svg>
-          </button>
-          <label class="volume-inline">
-            <span class="sr-only">Volume</span>
-            <input type="range" id="volume-master" min="0" max="100" step="1" value="70" />
-          </label>
-          <button class="icon-btn" id="audio-more" type="button" aria-expanded="false" aria-controls="audio-panel" aria-label="Sound settings">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="12" r="2" /><circle cx="8" cy="17" r="2" /></svg>
-          </button>
-          <div class="audio-panel" id="audio-panel" hidden>
-            <label>Overall <input type="range" id="volume-master-2" min="0" max="100" value="70" /></label>
-            <label>Music <input type="range" id="volume-music" min="0" max="100" value="60" /></label>
-            <label>Effects <input type="range" id="volume-sfx" min="0" max="100" value="80" /></label>
-            <p class="audio-note" id="audio-note">Sound is off until you click or press a key.</p>
+        <div class="presence" id="presence" hidden>
+          <div class="status" id="conn-status" role="status">
+            <span class="lamp-dot" aria-hidden="true"></span>
+            <span class="status-text">Connecting</span>
+          </div>
+          <div class="partner-status" id="partner-status" hidden>
+            <span class="lamp-dot" aria-hidden="true"></span>
+            <span class="status-text"></span>
           </div>
         </div>
       </header>
 
       <main id="main" tabindex="-1">
-        <!-- Shown during a longer connection outage while in a room -->
-        <div class="conn-banner" id="conn-banner" hidden>
+        <!-- Shown when the connection has been down for a while -->
+        <div class="conn-banner" id="conn-banner" role="status" hidden>
           <span class="lamp-dot is-lost" aria-hidden="true"></span>
           <p class="conn-banner-text">
-            <strong id="conn-banner-title">Can’t reach the game server</strong>
+            <strong id="conn-banner-title">Reconnecting</strong>
             <span id="conn-banner-detail"></span>
           </p>
           <button class="btn" id="conn-retry" type="button">Try now</button>
         </div>
 
-        <!-- Menu -->
+        <!-- Title and menu -->
         <section id="screen-menu" class="screen menu" aria-labelledby="menu-title" hidden>
-          <h1 id="menu-title" class="menu-title title-plate small"><span>Last</span> <span>Call</span></h1>
+          <header class="menu-hero">
+            <h1 id="menu-title" class="wordmark">
+              <svg viewBox="0 0 640 360" role="img" aria-label="Last Call"><use href="#wordmark-stacked" /></svg>
+            </h1>
+            <p class="menu-tag">A puzzle game for two. One of you is trapped inside a forgotten telephone exchange; the other holds the manual. Talk it through.</p>
+            <p class="menu-progress" id="menu-progress" hidden></p>
+          </header>
           <div class="banner" id="menu-banner" role="alert" hidden></div>
 
           <div class="menu-grid">
@@ -118,19 +167,19 @@
               </fieldset>
 
               <fieldset class="choices">
-                <legend>Clock</legend>
+                <legend>Stage countdown</legend>
                 <label class="choice">
-                  <input type="radio" name="mode" value="timed" checked />
+                  <input type="radio" name="mode" value="untimed" checked />
                   <span class="choice-body">
-                    <span class="choice-title">25 minutes</span>
-                    <span class="choice-desc">Wrong answers cost 30 seconds.</span>
+                    <span class="choice-title">Relaxed</span>
+                    <span class="choice-desc">No countdown. Speed still earns stars.</span>
                   </span>
                 </label>
                 <label class="choice">
-                  <input type="radio" name="mode" value="untimed" />
+                  <input type="radio" name="mode" value="timed" />
                   <span class="choice-body">
-                    <span class="choice-title">No clock</span>
-                    <span class="choice-desc">Take as long as you need.</span>
+                    <span class="choice-title">Countdown</span>
+                    <span class="choice-desc">Each stage has a time limit. Wrong answers cost 30 seconds.</span>
                   </span>
                 </label>
               </fieldset>
@@ -173,51 +222,59 @@
               <ol class="how-steps">
                 <li>One player opens a room and sends the invite link. The other opens it on their own device.</li>
                 <li><strong>The Caller</strong> sees the inside of the exchange: symbols, lamps and machines. Only the Caller can work the machines.</li>
-                <li><strong>The Operator</strong> sees the field manual: what the symbols mean and the rules. Only the Operator can read it.</li>
+                <li><strong>The Operator</strong> holds the field manual: what everything means, and the rules. Only the Operator can read it.</li>
                 <li>Talk it through in the chat, or on a phone or voice call. Neither of you can solve a puzzle alone.</li>
-                <li>Stuck? Each of you has three hints per puzzle. Each one is clearer than the last.</li>
+                <li>Each stage is three puzzles. Restore it to earn up to three stars and open the next of 200 stages.</li>
               </ol>
             </section>
           </div>
         </section>
 
-        <!-- Lobby -->
+        <!-- Lobby and stage map -->
         <section id="screen-lobby" class="screen lobby" aria-labelledby="lobby-title" hidden>
-          <div class="ticket">
-            <h1 id="lobby-title" class="ticket-label">Room code</h1>
-            <p class="ticket-code" id="lobby-code">———</p>
-            <div class="ticket-actions">
-              <button class="btn btn-lamp" id="copy-link" type="button">Copy invite link</button>
-              <button class="btn" id="share-link" type="button" hidden>Share…</button>
-              <button class="btn-text" id="copy-code" type="button">Copy code</button>
+          <div class="lobby-top">
+            <div class="ticket" id="ticket">
+              <h1 id="lobby-title" class="ticket-label">Room code</h1>
+              <p class="ticket-code" id="lobby-code">———</p>
+              <div class="ticket-actions">
+                <button class="btn btn-lamp" id="copy-link" type="button">Copy invite link</button>
+                <button class="btn" id="share-link" type="button" hidden>Share…</button>
+                <button class="btn-text" id="copy-code" type="button">Copy code</button>
+              </div>
+              <p class="ticket-help" id="ticket-help">Send the link to your partner. They can also type the code on the start screen.</p>
             </div>
-            <p class="ticket-help">Send the link to your partner. They can also type the code on the start screen.</p>
+            <div class="lobby-side">
+              <div class="seats" id="seats"></div>
+              <div class="lobby-controls">
+                <fieldset class="segmented" id="mode-switch">
+                  <legend>Stage countdown</legend>
+                  <label><input type="radio" name="lobby-mode" value="untimed" /> <span>Relaxed</span></label>
+                  <label><input type="radio" name="lobby-mode" value="timed" /> <span>Countdown</span></label>
+                </fieldset>
+                <button class="btn" id="swap-roles" type="button">Swap roles</button>
+              </div>
+              <details class="briefing" id="briefing"></details>
+            </div>
           </div>
 
-          <div class="seats" id="seats"></div>
+          <div class="map" id="map"></div>
+          <button class="btn-text leave" id="leave-lobby" type="button">Leave room</button>
+        </section>
 
-          <div class="card briefing" id="briefing"></div>
-
-          <div class="lobby-controls">
-            <fieldset class="segmented" id="mode-switch">
-              <legend>Clock</legend>
-              <label><input type="radio" name="lobby-mode" value="timed" /> <span>25 minutes</span></label>
-              <label><input type="radio" name="lobby-mode" value="untimed" /> <span>No clock</span></label>
-            </fieldset>
-            <div class="lobby-buttons">
-              <button class="btn" id="swap-roles" type="button">Swap roles</button>
-              <button class="btn btn-lamp" id="start-game" type="button" disabled>Start</button>
-            </div>
-            <p class="lobby-wait" id="lobby-wait" aria-live="polite"></p>
-            <button class="btn-text leave" id="leave-lobby" type="button">Leave room</button>
+        <!-- A stage in play -->
+        <section id="screen-game" class="screen game" aria-labelledby="puzzle-title" hidden>
+          <header class="stage-head" id="stage-head"></header>
+          <div class="stage" id="stage"></div>
+          <section class="hints card" id="hints" aria-labelledby="hints-title"></section>
+          <div class="game-foot">
+            <button class="btn-text" id="abandon-stage" type="button">Back to the stage map</button>
+            <button class="btn-text" id="leave-game" type="button">Leave room</button>
           </div>
         </section>
 
-        <!-- Game -->
-        <section id="screen-game" class="screen game" aria-labelledby="puzzle-title" hidden>
-          <div class="stage" id="stage"></div>
-          <section class="hints card" id="hints" aria-labelledby="hints-title"></section>
-          <button class="btn-text leave" id="leave-game" type="button">Leave room</button>
+        <!-- After a stage -->
+        <section id="screen-result" class="screen result-screen" aria-labelledby="result-title" hidden>
+          <div id="result"></div>
         </section>
       </main>
 
@@ -250,6 +307,54 @@
         </form>
       </aside>
     </div>
+
+    <!-- Settings: a brass knob in the bottom-left corner -->
+    <button class="settings-btn" id="settings-btn" type="button" aria-expanded="false" aria-controls="settings">
+      <svg viewBox="0 0 32 32" aria-hidden="true">
+        <circle cx="16" cy="16" r="11" class="knob" />
+        <path d="M16 6.5v6" class="knob-mark" />
+        <path d="M16 1.5v2.5M16 28v2.5M1.5 16H4M28 16h2.5M5.7 5.7l1.8 1.8M24.5 24.5l1.8 1.8M5.7 26.3l1.8-1.8M24.5 7.5l1.8-1.8" class="ticks" />
+      </svg>
+      <span class="settings-btn-text">Settings</span>
+    </button>
+    <section class="settings" id="settings" role="dialog" aria-labelledby="settings-title" hidden>
+      <div class="settings-head">
+        <h2 id="settings-title" tabindex="-1">Settings</h2>
+        <button class="icon-btn" id="settings-close" type="button" aria-label="Close settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+      </div>
+      <div class="settings-body">
+        <fieldset class="settings-group">
+          <legend>Sound</legend>
+          <label class="switch"><input type="checkbox" id="set-mute" /> <span>Mute all sound</span></label>
+          <label class="slider"><span>Overall volume</span><input type="range" id="set-master" min="0" max="100" step="1" /></label>
+          <label class="slider"><span>Music</span><input type="range" id="set-music" min="0" max="100" step="1" /></label>
+          <label class="slider"><span>Sound effects</span><input type="range" id="set-sfx" min="0" max="100" step="1" /></label>
+          <p class="settings-note" id="set-audio-note"></p>
+        </fieldset>
+        <fieldset class="settings-group">
+          <legend>Motion</legend>
+          <label class="radio"><input type="radio" name="set-motion" value="system" /> <span>Match my device</span></label>
+          <label class="radio"><input type="radio" name="set-motion" value="reduce" /> <span>Reduce motion</span></label>
+          <label class="radio"><input type="radio" name="set-motion" value="full" /> <span>Full motion</span></label>
+        </fieldset>
+        <fieldset class="settings-group">
+          <legend>Reading</legend>
+          <div class="radio-row" role="radiogroup" aria-label="Text size">
+            <label class="radio"><input type="radio" name="set-text" value="standard" /> <span>Standard text</span></label>
+            <label class="radio"><input type="radio" name="set-text" value="large" /> <span>Large</span></label>
+            <label class="radio"><input type="radio" name="set-text" value="larger" /> <span>Larger</span></label>
+          </div>
+          <label class="switch"><input type="checkbox" id="set-contrast" /> <span>Higher contrast</span></label>
+          <label class="switch"><input type="checkbox" id="set-manual-font" /> <span>Typewriter font in the manual</span></label>
+        </fieldset>
+        <fieldset class="settings-group">
+          <legend>Story</legend>
+          <button class="btn" id="set-replay" type="button">Replay the opening story</button>
+        </fieldset>
+      </div>
+    </section>
 
     <!-- Overlays -->
     <div class="overlay" id="overlay" hidden>

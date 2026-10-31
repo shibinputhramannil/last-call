@@ -1,0 +1,79 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;600;700&family=Lilita+One&display=swap" />
+<style>
+  html, body { margin: 0; width: 1200px; height: 630px; overflow: hidden; }
+  body {
+    background:
+      radial-gradient(46% 62% at 50% 40%, rgba(242,168,59,0.24), transparent 70%),
+      radial-gradient(120% 90% at 50% 120%, #0d0907, transparent 60%),
+      #1c1411;
+    font-family: 'Atkinson Hyperlegible Next', sans-serif;
+    color: #efe6d6;
+    position: relative;
+  }
+  .board { position: absolute; top: 70px; width: 250px; height: 430px; border-radius: 22px;
+    background: linear-gradient(160deg, #2e211b, #1f1612 70%); border: 1px solid #4a3828;
+    box-shadow: inset 0 0 0 7px #241a15, inset 0 0 0 8px rgba(201,162,90,.35), 0 30px 60px rgba(0,0,0,.55); }
+  .left { left: -40px; transform: rotate(-6deg); }
+  .right { right: -40px; transform: rotate(6deg); }
+  .jacks { position: absolute; inset: 34px 30px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px 14px; }
+  .jack { width: 54px; height: 54px; border-radius: 50%; margin: auto;
+    background: radial-gradient(circle, #0d0907 38%, #6d5230 41%, #3e2f22 62%, #2a1f19 100%);
+    box-shadow: inset 0 2px 4px rgba(0,0,0,.6); }
+  .lit { background: radial-gradient(circle at 40% 35%, #fff2c9, #f2a83b 45%, #c26a17 100%); box-shadow: 0 0 26px rgba(242,168,59,.65); }
+  .green { background: radial-gradient(circle at 40% 35%, #e3ffe9, #4fbf72 45%, #2a7a45 100%); box-shadow: 0 0 22px rgba(79,191,114,.5); }
+  .wordmark { position: absolute; left: 50%; top: 40px; width: 560px; transform: translateX(-50%); filter: drop-shadow(0 18px 30px rgba(0,0,0,.6)) drop-shadow(0 0 40px rgba(242,168,59,.25)); }
+  .tag { position: absolute; left: 0; right: 0; bottom: 64px; text-align: center; }
+  .tag strong { display: block; font-family: 'Lilita One', sans-serif; font-weight: 400; font-size: 40px; color: #ffd27a; text-shadow: 0 3px 0 #2a1309; letter-spacing: .5px; }
+  .tag span { display: block; margin-top: 8px; font-size: 25px; color: #d8cbb6; }
+  svg.cord { position: absolute; inset: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+  <div class="board left"><div class="jacks">
+    <i class="jack"></i><i class="jack lit"></i><i class="jack"></i>
+    <i class="jack"></i><i class="jack"></i><i class="jack green"></i>
+    <i class="jack lit"></i><i class="jack"></i><i class="jack"></i>
+    <i class="jack"></i><i class="jack"></i><i class="jack lit"></i>
+    <i class="jack"></i><i class="jack lit"></i><i class="jack"></i>
+  </div></div>
+  <div class="board right"><div class="jacks">
+    <i class="jack lit"></i><i class="jack"></i><i class="jack"></i>
+    <i class="jack"></i><i class="jack green"></i><i class="jack"></i>
+    <i class="jack"></i><i class="jack"></i><i class="jack lit"></i>
+    <i class="jack lit"></i><i class="jack"></i><i class="jack"></i>
+    <i class="jack"></i><i class="jack"></i><i class="jack lit"></i>
+  </div></div>
+  <svg class="cord" viewBox="0 0 1200 630">
+    <path d="M150 360 C 330 520, 870 520, 1050 330" fill="none" stroke="#120d0b" stroke-width="16" stroke-linecap="round" opacity=".7"/>
+    <path d="M150 352 C 330 512, 870 512, 1050 322" fill="none" stroke="#c4513f" stroke-width="9" stroke-linecap="round"/>
+  </svg>
+  <svg class="wordmark" viewBox="0 0 640 360">
+    <defs>
+      <linearGradient id="wm-face" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff0c2"/><stop offset="0.42" stop-color="#ffc24f"/><stop offset="1" stop-color="#e5781d"/></linearGradient>
+      <linearGradient id="wm-side" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9b5420"/><stop offset="1" stop-color="#5b2b10"/></linearGradient>
+      <radialGradient id="wm-lamp" cx="0.4" cy="0.35" r="0.65"><stop offset="0" stop-color="#fff6d8"/><stop offset="0.45" stop-color="#ffbe4a"/><stop offset="1" stop-color="#d9661a"/></radialGradient>
+    </defs>
+    <g font-family="'Lilita One', sans-serif" text-anchor="middle" stroke-linejoin="round" paint-order="stroke fill">
+      <g transform="rotate(-5 320 120)">
+        <text x="320" y="150" font-size="150" fill="url(#wm-side)" stroke="#2a1309" stroke-width="22" transform="translate(0 11)">LAST</text>
+        <text x="320" y="150" font-size="150" fill="url(#wm-face)" stroke="#2a1309" stroke-width="13">LAST</text>
+        <text x="320" y="150" font-size="150" fill="none" stroke="#fff4d6" stroke-opacity="0.55" stroke-width="2.5" transform="translate(-2 -3)">LAST</text>
+      </g>
+      <text x="320" y="300" font-size="196" fill="url(#wm-side)" stroke="#2a1309" stroke-width="24" transform="translate(0 13)">CALL</text>
+      <text x="320" y="300" font-size="196" fill="url(#wm-face)" stroke="#2a1309" stroke-width="14">CALL</text>
+      <text x="320" y="300" font-size="196" fill="none" stroke="#fff4d6" stroke-opacity="0.55" stroke-width="2.5" transform="translate(-2 -3)">CALL</text>
+    </g>
+    <path d="M120 338c12-16 26 14 38 0s26 14 38 0 26 14 38 0 26 14 38 0 26 14 38 0 26 14 38 0 26 14 38 0 26 14 38 0" fill="none" stroke="#2a1309" stroke-width="11" stroke-linecap="round"/>
+    <path d="M120 338c12-16 26 14 38 0s26 14 38 0 26 14 38 0 26 14 38 0 26 14 38 0 26 14 38 0 26 14 38 0 26 14 38 0" fill="none" stroke="#c9a25a" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="520" cy="338" r="15" fill="url(#wm-lamp)" stroke="#2a1309" stroke-width="5"/>
+  </svg>
+  <div class="tag">
+    <strong>A two-player telephone mystery</strong>
+    <span>One of you sees the machines. One of you holds the manual.</span>
+  </div>
+</body>
+</html>

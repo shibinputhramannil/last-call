@@ -13,6 +13,8 @@ const { loadConfig } = await import('./config.js');
 const { createApp } = await import('./app.js');
 const { createLogger } = await import('./logger.js');
 const { createNarrator } = await import('./narrator.js');
+const { createSigner } = await import('./signing.js');
+const { createStore, resolveSecret } = await import('./store.js');
 
 let config;
 try {
@@ -25,7 +27,20 @@ try {
 
 const log = createLogger(config.logLevel);
 const narrator = createNarrator(config.narrator, { log });
-const app = createApp(config, { narrator, log });
+let store;
+let saveSecret;
+try {
+  store = createStore({ dataDir: config.dataDir, log });
+  saveSecret = resolveSecret({ secret: config.saveSecret, dataDir: config.dataDir });
+} catch (err) {
+  console.error(`\nLast Call could not start: DATA_DIR "${config.dataDir}" is not usable (${err.message}).`);
+  console.error('Point DATA_DIR at a writable folder, or remove it to keep rooms in memory only.\n');
+  process.exit(1);
+}
+if (saveSecret.source === 'ephemeral') {
+  log.warn('SAVE_SECRET is not set: saved progress and room tickets will not survive a restart (see README, Persistence)');
+}
+const app = createApp(config, { narrator, log, store, signer: createSigner(saveSecret.secret) });
 
 /** Addresses other devices on the same network can use. */
 function networkUrls(port) {
@@ -56,6 +71,7 @@ app.server.listen(config.port, config.host, () => {
     port,
     node: process.version,
     narrator: narrator.enabled ? config.narrator.model : 'built-in lines',
+    rooms: store.persistent ? `saved in ${config.dataDir}` : 'memory',
   });
   if (process.stdout.isTTY) {
     console.log(`\n  Play here:            http://localhost:${port}`);

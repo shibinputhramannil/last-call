@@ -55,6 +55,48 @@ export const GLYPHS = Object.freeze({
     description: 'a closed eye: a downward-curving lid with three lashes hanging below it and a gentle arch above',
     strokes: ['M10 28q22 20 44 0', 'M21 35.5l-3 8', 'M32 38v9', 'M43 35.5l3 8', 'M16 16q16 -9 32 0'],
   },
+  // Later chapters add these. Some deliberately resemble earlier glyphs
+  // (ladder / broken ladder, open eye / sleeping eye), so describe carefully.
+  ladder: {
+    name: 'The Ladder',
+    description: 'two upright rails joined by three complete rungs, none of them broken',
+    strokes: ['M22 10v44', 'M42 10v44', 'M22 20h20', 'M22 32h20', 'M22 44h20'],
+  },
+  'open-eye': {
+    name: 'The Open Eye',
+    description: 'an open eye: a pointed almond outline with a round pupil in the middle',
+    strokes: ['M8 32q24 -24 48 0q-24 24 -48 0', 'M26 32a6 6 0 1 0 12 0a6 6 0 1 0 -12 0'],
+  },
+  hourglass: {
+    name: 'The Hourglass',
+    description: 'an hourglass: a flat bar at the top and the bottom, joined by two lines that cross in the middle',
+    strokes: ['M16 10h32', 'M16 54h32', 'M20 10l24 44', 'M44 10l-24 44'],
+  },
+  lightning: {
+    name: 'The Lightning',
+    description: 'a single zigzag lightning bolt running from the top right down to the bottom left',
+    strokes: ['M40 6l-16 26h16l-16 26'],
+  },
+  horseshoe: {
+    name: 'The Horseshoe',
+    description: 'a horseshoe opening downwards: a rounded arch with a short flat foot at the bottom of each leg',
+    strokes: ['M18 52v-22a14 14 0 0 1 28 0v22', 'M12 52h12', 'M40 52h12'],
+  },
+  spiral: {
+    name: 'The Spiral',
+    description: 'a spiral coiling outwards from a point in the centre, about two and a half turns',
+    strokes: ['M32 32a3 3 0 0 1 6 0a7 7 0 0 1 -14 0a11 11 0 0 1 22 0a15 15 0 0 1 -30 0a19 19 0 0 1 38 0'],
+  },
+  'compass-star': {
+    name: 'The Compass Star',
+    description: 'a four-pointed star like a compass rose, with long sharp points up, down, left and right',
+    strokes: ['M32 6l7 19l19 7l-19 7l-7 19l-7 -19l-19 -7l19 -7z'],
+  },
+  chain: {
+    name: 'The Chain',
+    description: 'two overlapping ovals side by side, like two links of a chain',
+    strokes: ['M8 32a12 9 0 1 0 24 0a12 9 0 1 0 -24 0', 'M32 32a12 9 0 1 0 24 0a12 9 0 1 0 -24 0'],
+  },
 });
 
 export const GLYPH_IDS = Object.freeze(Object.keys(GLYPHS));
@@ -76,4 +118,16 @@ export const STAMPS = Object.freeze({
   diamond: { label: 'diamond', d: 'M32 10l22 22l-22 22l-22 -22z' },
 });
 
-export const TRUNKS = Object.freeze(['A', 'B', 'C', 'D', 'E', 'F']);
+export const TRUNKS = Object.freeze(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']);
+
+// Relay caps on the relay rack. Always shown with their name as well as colour.
+export const CAPS = Object.freeze({
+  red: { label: 'red' },
+  green: { label: 'green' },
+  blue: { label: 'blue' },
+  yellow: { label: 'yellow' },
+});
+
+// Ring cadences on the party line: L is a long ring, S a short one.
+export const CADENCE_WORDS = Object.freeze({ L: 'long', S: 'short' });
+export const describeCadence = (cadence) => [...cadence].map((c) => CADENCE_WORDS[c]).join(', ');

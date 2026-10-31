@@ -1,8 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import WebSocket from 'ws';
 import { createApp } from '../server/app.js';
 import { createLogger, silentLogger } from '../server/logger.js';
+import { createSigner } from '../server/signing.js';
+import { createStore } from '../server/store.js';
 
 const baseConfig = {
   trustProxy: false,
@@ -40,7 +45,7 @@ test('health check reports status, rooms and connected players', async () => {
   }
 });
 
-test('graceful shutdown drains, tells players why, and closes everything', async () => {
+test('graceful shutdown drains, tells players it is restarting, and closes everything', async () => {
   const { app, base } = await start();
   const host = await (await post(base, '/api/rooms', { role: 'caller', mode: 'timed' })).json();
   const ws = new WebSocket(base.replace('http', 'ws') + '/ws');
@@ -67,7 +72,7 @@ test('graceful shutdown drains, tells players why, and closes everything', async
 
   await closed;
   const notice = messages.find((m) => m.t === 'closed');
-  assert.equal(notice.code, 'ROOM_CLOSED');
+  assert.equal(notice.code, 'RESTARTING', 'not terminal: browsers keep reconnecting');
   assert.match(notice.message, /restarting/);
   await done;
   assert.equal(app.server.listening, false);
@@ -144,4 +149,84 @@ test('the logger writes one readable line per event and respects the level', () 
   assert.equal(lines.length, 2);
   assert.match(lines[0], /^\d{4}-\d\d-\d\dT.* INFO {2}room opened room=ABCDEF mode=timed$/);
   assert.match(lines[1], /ERROR request failed err=".*boom/);
+});
+
+/** Opens a socket, says hello, and resolves once welcomed or turned away. */
+async function hello(base, code, token, extra = {}) {
+  const ws = new WebSocket(base.replace('http', 'ws') + '/ws');
+  const messages = [];
+  ws.on('message', (d) => messages.push(JSON.parse(d.toString())));
+  await new Promise((resolve) => ws.once('open', resolve));
+  ws.send(JSON.stringify({ t: 'hello', code, token, ...extra }));
+  await new Promise((resolve) => {
+    const check = () => (messages.some((m) => m.t === 'welcome' || m.t === 'closed') ? resolve() : setTimeout(check, 10));
+    check();
+  });
+  return { ws, messages, welcome: messages.find((m) => m.t === 'welcome'), closed: messages.find((m) => m.t === 'closed') };
+}
+
+test('with DATA_DIR, rooms, chat and stage progress survive a full server restart', async () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), 'lastcall-'));
+  const signer = createSigner('lifecycle-secret-0123456789abcdef');
+  try {
+    const first = await start({ ...baseConfig, dataDir }, { store: createStore({ dataDir }), signer });
+    const host = await (await post(first.base, '/api/rooms', { name: 'Ada', role: 'caller', mode: 'untimed' })).json();
+    const guest = await (await post(first.base, `/api/rooms/${host.code}/join`, { name: 'Grace' })).json();
+    const a = await hello(first.base, host.code, host.token);
+    const b = await hello(first.base, host.code, guest.token);
+    a.ws.send(JSON.stringify({ t: 'chat', clientId: 'keep-me', text: 'Still there?' }));
+    a.ws.send(JSON.stringify({ t: 'play', stageId: '1-1' }));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const puzzle = first.app.rooms.rooms.get(host.code).game.viewFor('operator', Date.now()).puzzle;
+    await first.app.shutdown({ flushMs: 50 });
+
+    const second = await start({ ...baseConfig, dataDir }, { store: createStore({ dataDir }), signer });
+    try {
+      const a2 = await hello(second.base, host.code, host.token);
+      const b2 = await hello(second.base, host.code, guest.token);
+      assert.ok(a2.welcome, a2.closed?.message);
+      assert.equal(b2.welcome.state.game.phase, 'playing');
+      assert.equal(b2.welcome.state.game.puzzle.id, puzzle.id);
+      assert.deepEqual(b2.welcome.state.game.puzzle.view, puzzle.view);
+      assert.ok(b2.welcome.chat.some((m) => m.clientId === 'keep-me'));
+      a2.ws.close();
+      b2.ws.close();
+    } finally {
+      await second.app.close();
+    }
+    a.ws.close();
+    b.ws.close();
+  } finally {
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('without DATA_DIR, a restarted server rebuilds the room from the players’ signed tickets', async () => {
+  const signer = createSigner('ticket-secret-0123456789abcdefgh');
+  const first = await start(baseConfig, { signer });
+  const host = await (await post(first.base, '/api/rooms', { role: 'caller', mode: 'timed' })).json();
+  const guest = await (await post(first.base, `/api/rooms/${host.code}/join`, {})).json();
+  const a = await hello(first.base, host.code, host.token);
+  const b = await hello(first.base, host.code, guest.token);
+  const ticketA = a.welcome.state.ticket;
+  const ticketB = b.welcome.state.ticket;
+  const save = a.welcome.progress;
+  await first.app.shutdown({ flushMs: 50 });
+
+  const second = await start(baseConfig, { signer });
+  try {
+    const a2 = await hello(second.base, host.code, host.token, { ticket: ticketA, progress: save });
+    const b2 = await hello(second.base, host.code, guest.token, { ticket: ticketB });
+    assert.ok(a2.welcome, a2.closed?.message);
+    assert.ok(b2.welcome, b2.closed?.message);
+    assert.equal(b2.welcome.state.you.role, 'operator');
+    assert.ok(b2.welcome.state.players.every((p) => p.present));
+    const lost = await hello(second.base, 'ZZZZZZ', host.token, { ticket: ticketA });
+    assert.equal(lost.closed.code, 'ROOM_NOT_FOUND');
+    a2.ws.close();
+    b2.ws.close();
+    lost.ws.close();
+  } finally {
+    await second.app.close();
+  }
 });

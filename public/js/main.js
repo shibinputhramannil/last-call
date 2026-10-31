@@ -1,31 +1,44 @@
 import { formatRoomCode, normalizeRoomCode, roomCodeProblem } from '/shared/constants.js';
+import { CHAPTERS, stageById } from '/shared/campaign.js';
 import { AudioEngine } from './audio.js';
 import { renderCaller } from './caller.js';
 import { ChatPanel } from './chat.js';
 import { $, $$, h, clear, announce, toast, copyText, formatClock, prefersReducedMotion } from './dom.js';
 import { renderManual } from './manual.js';
+import { createMap } from './map.js';
 import { api, Connection } from './net.js';
-import { forgetSeat, getSeat, loadAudioPrefs, saveAudioPrefs, saveSeat } from './store.js';
+import { renderResult } from './result.js';
+import { setupSettings } from './settings.js';
+import { runOpening } from './story.js';
+import { forgetSeat, getSeat, loadPrefs, loadProgress, markOpeningSeen, openingSeen, saveProgress, saveSeat, saveTicket } from './store.js';
 
 const ROLE_LABEL = { caller: 'Caller', operator: 'Operator' };
 const ANSWER_TIMEOUT_MS = 6_000;
+/** A connection drop shorter than this is never shown: most blips heal on the first retry. */
+const QUIET_DROP_MS = 1_500;
+/** After this long without a connection, a banner explains what is happening. */
+const BANNER_AFTER_MS = 10_000;
 
-const audio = new AudioEngine(loadAudioPrefs());
+const audio = new AudioEngine(loadPrefs().audio);
 
 const app = {
   code: null,
   conn: null,
   state: null,
   stateAt: 0,
-  screen: 'intro',
+  campaign: null,
+  screen: null,
   puzzleKey: null,
+  stageKey: null,
   controller: null,
+  result: null, // { key, ctl }
   answerTimer: null,
   holdUntil: 0,
   holdTimer: null,
-  endShownFor: null,
-  announcedMinutes: new Set(),
   welcomed: false,
+  downSince: 0,
+  outageShown: false,
+  announcedMinutes: new Set(),
 };
 
 const chat = new ChatPanel({
@@ -33,31 +46,45 @@ const chat = new ChatPanel({
   audio,
 });
 
+const map = createMap($('#map'), {
+  onPlay: (stageId) => {
+    audio.unlock();
+    if (!app.conn?.send({ t: 'play', stageId })) toast('Not connected, so the stage did not start. Try again in a moment.', 'error');
+  },
+});
+
 // ---- Screens ----------------------------------------------------------------
 
 const shell = $('#shell');
+const ROOM_SCREENS = ['lobby', 'game', 'result'];
 
 function showScreen(name) {
   const changed = app.screen !== name;
   app.screen = name;
-  $('#screen-intro').hidden = name !== 'intro';
-  shell.hidden = name === 'intro';
-  for (const id of ['menu', 'lobby', 'game']) $(`#screen-${id}`).hidden = id !== name;
-  const inRoom = name === 'lobby' || name === 'game';
+  $('#screen-story').hidden = name !== 'story';
+  shell.hidden = name === 'story';
+  for (const id of ['menu', ...ROOM_SCREENS]) $(`#screen-${id}`).hidden = id !== name;
+  const inRoom = ROOM_SCREENS.includes(name);
   shell.classList.toggle('with-chat', inRoom);
   shell.classList.toggle('in-room', inRoom);
+  document.body.classList.toggle('in-room', inRoom);
   $('#chat').hidden = !inRoom;
-  $('#progress').hidden = name !== 'game';
+  $('#presence').hidden = !inRoom;
+  $('#stage-indicator').hidden = name !== 'game';
   $('#timer').hidden = name !== 'game';
-  $('#conn-status').hidden = !inRoom;
   if (changed) {
-    audio.setMood(name === 'game' ? 'game' : name === 'lobby' ? 'lobby' : 'menu');
-    const heading = $(`#screen-${name} h1, #screen-${name} h2`);
-    if (heading) {
-      heading.setAttribute('tabindex', '-1');
-      heading.focus({ preventScroll: false });
+    const game = app.state?.game;
+    audio.setMood(
+      name === 'game' ? 'game' : name === 'result' ? (game?.phase === 'finale' ? 'won' : game?.phase === 'failed' ? 'lost' : 'result') : name === 'lobby' ? 'lobby' : 'menu',
+    );
+    if (name !== 'story') {
+      const heading = $(`#screen-${name} h1`);
+      if (heading) {
+        heading.setAttribute('tabindex', '-1');
+        heading.focus({ preventScroll: true });
+      }
+      window.scrollTo(0, 0);
     }
-    window.scrollTo(0, 0);
   }
 }
 
@@ -71,9 +98,7 @@ function showOverlay({ title, body, actions = [], tone = '', dismissable = false
   else if (body) bodyEl.append(body);
   const actionsEl = clear($('#overlay-actions'));
   for (const action of actions) {
-    actionsEl.append(
-      h('button', { class: `btn ${action.primary ? 'btn-lamp' : ''}`, type: 'button', onclick: action.onClick }, action.label),
-    );
+    actionsEl.append(h('button', { class: `btn ${action.primary ? 'btn-lamp' : ''}`, type: 'button', onclick: action.onClick }, action.label));
   }
   overlay.dataset.dismissable = dismissable ? 'true' : '';
   const wasHidden = overlay.hidden;
@@ -114,106 +139,24 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// ---- Opening ----------------------------------------------------------------
+// ---- Opening story ---------------------------------------------------------------
 
-function runIntro(next) {
-  const intro = $('#screen-intro');
-  showScreen('intro');
-  const finish = () => {
-    intro.classList.add('is-done');
-    $('.intro-enter', intro).focus();
-  };
-  if (prefersReducedMotion()) intro.classList.add('is-done');
-  $('.intro-skip', intro).addEventListener('click', finish);
-  $('.intro-actions', intro).addEventListener('animationend', () => intro.classList.add('is-done'));
-  const onKey = (e) => {
-    if (e.key === 'Escape' && !intro.classList.contains('is-done')) finish();
-  };
-  document.addEventListener('keydown', onKey);
-  $('.intro-enter', intro).addEventListener('click', () => {
-    document.removeEventListener('keydown', onKey);
-    audio.unlock();
-    audio.play('pickup');
-    if (prefersReducedMotion()) {
-      next();
-      return;
-    }
-    intro.classList.add('is-leaving');
-    setTimeout(() => {
-      intro.classList.remove('is-leaving');
-      next();
-    }, 500);
+function startOpening(then) {
+  showScreen('story');
+  runOpening({
+    audio,
+    onDone: () => {
+      markOpeningSeen();
+      then();
+    },
   });
 }
 
-// ---- Audio controls -----------------------------------------------------------
-
-function setupAudioControls() {
-  const mute = $('#mute-btn');
-  const masters = [$('#volume-master'), $('#volume-master-2')];
-  const music = $('#volume-music');
-  const sfx = $('#volume-sfx');
-  const more = $('#audio-more');
-  const panel = $('#audio-panel');
-  const note = $('#audio-note');
-
-  const sync = () => {
-    const p = audio.prefs;
-    mute.setAttribute('aria-pressed', String(p.muted));
-    mute.setAttribute('aria-label', p.muted ? 'Unmute sound' : 'Mute sound');
-    for (const m of masters) m.value = Math.round(p.master * 100);
-    music.value = Math.round(p.music * 100);
-    sfx.value = Math.round(p.sfx * 100);
-    note.hidden = audio.unlocked;
-  };
-  const update = (patch) => {
-    audio.setPrefs(patch);
-    saveAudioPrefs(audio.prefs);
-  };
-
-  mute.addEventListener('click', () => {
-    audio.unlock();
-    update({ muted: !audio.prefs.muted });
-  });
-  for (const m of masters) {
-    m.addEventListener('input', () => update({ master: m.value / 100, muted: false }));
-  }
-  music.addEventListener('input', () => update({ music: music.value / 100 }));
-  sfx.addEventListener('input', () => {
-    update({ sfx: sfx.value / 100 });
-    audio.play('click');
-  });
-  more.addEventListener('click', () => {
-    const open = panel.hidden;
-    panel.hidden = !open;
-    more.setAttribute('aria-expanded', String(open));
-  });
-  document.addEventListener('click', (e) => {
-    if (!panel.hidden && !panel.contains(e.target) && e.target !== more && !more.contains(e.target)) {
-      panel.hidden = true;
-      more.setAttribute('aria-expanded', 'false');
-    }
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !panel.hidden) {
-      panel.hidden = true;
-      more.setAttribute('aria-expanded', 'false');
-      more.focus();
-    }
-  });
-  audio.onChange(sync);
-  sync();
-
-  // Browsers only allow sound after a gesture; unlock on the first one anywhere.
-  const unlockOnce = () => {
-    audio.unlock();
-    if (audio.unlocked) {
-      document.removeEventListener('pointerdown', unlockOnce, true);
-      document.removeEventListener('keydown', unlockOnce, true);
-    }
-  };
-  document.addEventListener('pointerdown', unlockOnce, true);
-  document.addEventListener('keydown', unlockOnce, true);
+/** After a replay from Settings: back to wherever the player was. */
+function returnFromOpening() {
+  app.screen = null;
+  if (app.code && app.state) render();
+  else showMenu();
 }
 
 // ---- Menu -------------------------------------------------------------------
@@ -224,6 +167,12 @@ function showMenu({ banner = null, bannerTone = 'error', joinCode = null } = {})
   bannerEl.hidden = !banner;
   bannerEl.textContent = banner || '';
   bannerEl.classList.toggle('is-info', bannerTone === 'info');
+  const saved = loadProgress();
+  const progress = $('#menu-progress');
+  progress.hidden = !saved?.completed;
+  if (saved?.completed) {
+    progress.textContent = `Saved in this browser: ${saved.completed} of 200 stages restored, ${saved.stars} stars. Open or join a room to carry on.`;
+  }
   const menu = $('#screen-menu');
   menu.classList.toggle('invited', Boolean(joinCode));
   // Whoever arrived by invite should see "Join room" as the main action.
@@ -286,9 +235,7 @@ function checkJoinCode() {
     }
     const d = res.data;
     if (d.status === 'open') {
-      status.textContent = d.hostName
-        ? `${d.hostName} is waiting. You will be the ${ROLE_LABEL[d.role]}.`
-        : `Room found. You will be the ${ROLE_LABEL[d.role]}.`;
+      status.textContent = d.hostName ? `${d.hostName} is waiting. You will be the ${ROLE_LABEL[d.role]}.` : `Room found. You will be the ${ROLE_LABEL[d.role]}.`;
       status.classList.add('is-good');
     } else if (d.status === 'full') {
       status.textContent = 'That room already has a Caller and an Operator.';
@@ -311,7 +258,7 @@ function setupMenu() {
     formError(createForm, null);
     const data = new FormData(createForm);
     setFormBusy(createForm, true, 'Opening…');
-    const res = await api.createRoom({ name: data.get('name'), role: data.get('role'), mode: data.get('mode') });
+    const res = await api.createRoom({ name: data.get('name'), role: data.get('role'), mode: data.get('mode'), progress: loadProgress()?.token });
     setFormBusy(createForm, false);
     if (!res.ok) {
       formError(createForm, res.message);
@@ -357,7 +304,7 @@ function setupMenu() {
       return;
     }
     setFormBusy(joinForm, true, 'Joining…');
-    const res = await api.join(code, { name: joinForm.querySelector('[name="name"]').value });
+    const res = await api.join(code, { name: joinForm.querySelector('[name="name"]').value, progress: loadProgress()?.token });
     setFormBusy(joinForm, false);
     if (!res.ok) {
       formError(joinForm, res.message);
@@ -377,19 +324,20 @@ function setRoomUrl(code) {
   history.replaceState(null, '', url);
 }
 
-function inviteLink() {
-  return `${location.origin}/?room=${app.code}`;
-}
+const inviteLink = () => `${location.origin}/?room=${app.code}`;
 
 function enterRoom(code, token) {
   leaveConnection();
   app.code = code;
   app.state = null;
+  app.campaign = null;
   app.welcomed = false;
-  app.endShownFor = null;
+  app.downSince = 0;
+  app.outageShown = false;
   app.puzzleKey = null;
+  app.stageKey = null;
   setRoomUrl(code);
-  chat.reset();
+  chat.reset(code);
 
   const connectingTimer = setTimeout(() => {
     if (!app.welcomed) {
@@ -401,7 +349,12 @@ function enterRoom(code, token) {
     }
   }, 400);
 
-  const conn = new Connection(code, token);
+  const conn = new Connection({
+    code,
+    token,
+    // Read fresh on every attempt: after a server restart these rebuild the room.
+    hello: () => ({ ticket: getSeat(code)?.ticket, progress: loadProgress()?.token }),
+  });
   app.conn = conn;
   conn.addEventListener('status', (e) => onConnStatus(e.detail, connectingTimer));
   conn.addEventListener('message', (e) => onMessage(e.detail));
@@ -411,10 +364,13 @@ function enterRoom(code, token) {
 function leaveConnection() {
   if (app.conn) app.conn.stop();
   app.conn = null;
-  hideConnBanner();
-  if (app.controller) app.controller.destroy();
+  $('#conn-banner').hidden = true;
+  app.controller?.destroy();
   app.controller = null;
+  app.result?.ctl.destroy();
+  app.result = null;
   clearTimeout(app.holdTimer);
+  app.holdUntil = 0;
 }
 
 function leaveRoom({ local = false, banner = null, bannerTone, joinCode = null } = {}) {
@@ -432,7 +388,7 @@ function leaveRoom({ local = false, banner = null, bannerTone, joinCode = null }
 function confirmLeave() {
   showOverlay({
     title: 'Leave this room?',
-    body: 'Your seat will be freed so someone else can join with the code. Your partner stays in the room.',
+    body: 'Your seat will be freed so someone else can join with the code. Your partner stays in the room, and your campaign progress stays saved in this browser.',
     dismissable: true,
     actions: [
       { label: 'Stay', onClick: hideOverlay },
@@ -441,77 +397,82 @@ function confirmLeave() {
   });
 }
 
-function onConnStatus(detail, connectingTimer) {
-  const pill = $('#conn-status');
-  const text = pill.querySelector('.status-text');
-  const wasOpen = app.connState === 'open';
-  app.connState = detail.state;
-  pill.classList.remove('is-live', 'is-lost', 'is-waiting');
+const UNREACHABLE_TITLE = 'Can’t reach the game server';
 
+function onConnStatus(detail, connectingTimer) {
   if (detail.state === 'open') {
     clearTimeout(connectingTimer);
-    hideConnBanner();
+    app.downSince = 0;
     chat.setConnected(true);
-    renderStatus();
+    $('#conn-banner').hidden = true;
+  } else if (detail.state === 'closed') {
+    clearTimeout(connectingTimer);
+    $('#conn-banner').hidden = true;
+    onClosed(detail.code, detail.message);
     return;
-  }
-  chat.setConnected(false);
-  if (detail.state === 'connecting') {
-    pill.classList.add('is-waiting');
-    text.textContent = 'Connecting…';
-  } else if (detail.state === 'reconnecting') {
-    pill.classList.add('is-lost');
-    app.offline = Boolean(detail.offline);
-    if (app.welcomed && wasOpen) {
-      toast('Connection lost. Reconnecting… Your seat is kept for you.', 'error');
-      announce('Connection lost. Reconnecting.');
-    }
-    // A blip is handled quietly; a real outage gets a banner that explains it.
-    if (app.welcomed && detail.attempt >= 2) showConnBanner();
+  } else {
+    chat.setConnected(false);
+    if (detail.state === 'reconnecting' && !app.downSince) app.downSince = Date.now();
     if (!app.welcomed && detail.attempt >= 3 && $('#overlay-title').textContent !== UNREACHABLE_TITLE) {
       showOverlay({
         title: UNREACHABLE_TITLE,
         body: detail.offline
           ? 'You appear to be offline. Last Call will connect as soon as your internet is back.'
-          : 'The game server is not answering. It may be restarting or waking up, which can take about a minute. Last Call keeps trying every few seconds.',
+          : 'The game server is not answering. It may be restarting or waking up, which can take about a minute. Last Call keeps trying.',
         actions: [
           { label: 'Back to start', onClick: () => leaveRoom({ local: true }) },
           { label: 'Try now', primary: true, onClick: () => app.conn?.reconnectNow() },
         ],
       });
     }
-    tickConnection();
-  } else if (detail.state === 'closed') {
-    clearTimeout(connectingTimer);
-    hideConnBanner();
-    onClosed(detail.code, detail.message);
   }
+  tickConnection();
 }
 
-const UNREACHABLE_TITLE = 'Can’t reach the game server';
-
-function showConnBanner() {
-  const banner = $('#conn-banner');
-  if (!banner.hidden) return;
-  banner.hidden = false;
-  announce(app.offline ? 'You are offline. Reconnecting when your internet is back.' : 'Cannot reach the game server. Retrying.');
+/** Connected, Reconnecting or Offline, with a short drop never shown at all. */
+function connectionLabel() {
+  const conn = app.conn;
+  if (!conn) return null;
+  if (conn.state === 'open') return 'connected';
+  if (navigator.onLine === false) return 'offline';
+  if (!app.welcomed) return 'connecting';
+  if (conn.restarting) return 'reconnecting';
+  return Date.now() - app.downSince < QUIET_DROP_MS ? 'connected' : 'reconnecting';
 }
 
-function hideConnBanner() {
-  $('#conn-banner').hidden = true;
-}
-
-/** Keeps the status pill and the outage banner's countdown current. */
 function tickConnection() {
   const conn = app.conn;
-  if (!conn || conn.state === 'open' || conn.state === 'closed') return;
-  const seconds = Math.ceil(((conn.retryAt || 0) - Date.now()) / 1000);
+  if (!conn) return;
+  const label = connectionLabel();
+  const pill = $('#conn-status');
+  pill.classList.toggle('is-live', label === 'connected');
+  pill.classList.toggle('is-waiting', label === 'reconnecting' || label === 'connecting');
+  pill.classList.toggle('is-lost', label === 'offline');
+  pill.querySelector('.status-text').textContent = { connected: 'Connected', reconnecting: 'Reconnecting…', offline: 'Offline', connecting: 'Connecting…' }[label];
+  if (label === 'reconnecting' || label === 'offline') app.outageShown = true;
+
+  const banner = $('#conn-banner');
+  if (conn.state === 'open' || !app.welcomed) {
+    banner.hidden = true;
+    return;
+  }
+  const down = Date.now() - app.downSince;
+  const show = conn.restarting || down > BANNER_AFTER_MS || (label === 'offline' && down > 3_000);
+  if (show && banner.hidden) announce(label === 'offline' ? 'You are offline. Reconnecting when your internet is back.' : 'Reconnecting to the game server.');
+  banner.hidden = !show;
+  const seconds = Math.ceil((conn.retryAt - Date.now()) / 1000);
   const when = seconds > 0 ? `in ${seconds} s` : 'now';
-  $('#conn-status .status-text').textContent = app.offline ? 'You are offline' : `Reconnecting ${when}…`;
-  $('#conn-banner-title').textContent = app.offline ? 'You are offline' : UNREACHABLE_TITLE;
-  $('#conn-banner-detail').textContent = app.offline
-    ? 'Last Call will reconnect as soon as your internet is back. Your seat is saved.'
-    : `Trying again ${when}. Your seat is saved. If the server restarted, you will be taken back to the start to open a new room.`;
+  const kept = 'Your seat, stage, score and unsent messages are kept.';
+  if (label === 'offline') {
+    $('#conn-banner-title').textContent = 'You are offline';
+    $('#conn-banner-detail').textContent = `Last Call reconnects as soon as your internet is back. ${kept}`;
+  } else if (conn.restarting) {
+    $('#conn-banner-title').textContent = 'The game server is restarting';
+    $('#conn-banner-detail').textContent = `This usually takes under a minute. Reconnecting ${when}. ${kept}`;
+  } else {
+    $('#conn-banner-title').textContent = 'Reconnecting';
+    $('#conn-banner-detail').textContent = `Trying again ${when}. ${kept}`;
+  }
 }
 
 function onClosed(code, message) {
@@ -553,18 +514,28 @@ function onMessage(msg) {
     case 'welcome': {
       const first = !app.welcomed;
       app.welcomed = true;
-      hideOverlayIfConnecting();
+      const title = $('#overlay-title').textContent;
+      if (title === 'Connecting' || title === UNREACHABLE_TITLE) hideOverlay();
+      app.campaign = msg.campaign;
+      saveProgress(msg.progress, msg.campaign);
       chat.setIdentity(msg.state.you);
       chat.load(msg.chat);
+      app.state = null; // a welcome always replaces what we had
       applyState(msg.state);
-      chat.scrollToEnd(true); // the panel was hidden until applyState showed the room
-
+      chat.scrollToEnd(true);
       if (first) audio.play('join');
-      else toast('Reconnected.', 'good', 2500);
+      else if (app.outageShown) toast('Back on the line.', 'good', 2500);
+      app.outageShown = false;
       break;
     }
     case 'state':
+      if (app.state && msg.state.rev < app.state.rev) break; // an older update
       applyState(msg.state);
+      break;
+    case 'progress':
+      app.campaign = msg.campaign;
+      saveProgress(msg.token, msg.campaign);
+      if (app.screen === 'lobby') renderLobby();
       break;
     case 'chat':
       chat.add(msg.message);
@@ -582,7 +553,7 @@ function onMessage(msg) {
       toast(msg.message, 'error');
       break;
     case 'event':
-      if (msg.name === 'started') audio.play('ring');
+      if (msg.name === 'stage-started') audio.play('ring');
       break;
     case 'answer-result':
       onAnswerResult(msg);
@@ -592,95 +563,120 @@ function onMessage(msg) {
   }
 }
 
-function hideOverlayIfConnecting() {
-  const title = $('#overlay-title').textContent;
-  if (title === 'Connecting' || title === UNREACHABLE_TITLE) hideOverlay();
-}
-
 // ---- State --------------------------------------------------------------------
 
-function partnerOf(state) {
-  return state.players.find((p) => !p.you);
-}
+const partnerOf = (state) => state.players.find((p) => !p.you);
+const partnerReady = () => {
+  const p = app.state && partnerOf(app.state);
+  return Boolean(p?.connected) && app.conn?.state === 'open';
+};
+const waitingText = () => {
+  const p = app.state && partnerOf(app.state);
+  if (!p?.present) return `Waiting for the ${ROLE_LABEL[p?.role || 'operator']} to join. Send them the invite link.`;
+  if (!p.connected) return `Waiting for ${p.name} to reconnect.`;
+  return 'Reconnecting…';
+};
 
 function applyState(state) {
   const prev = app.state;
   app.state = state;
   app.stateAt = Date.now();
+  if (state.ticket) saveTicket(app.code, state.ticket);
   chat.setIdentity(state.you);
 
   if (prev) {
     const before = partnerOf(prev);
     const after = partnerOf(state);
-    if (before && after && before.role === after.role) {
-      if (!before.connected && after.connected) {
+    if (before.role === after.role && after.present) {
+      if (!before.present) {
         audio.play('join');
-        announce(`${after.name} is on the line.`);
-      } else if (before.connected && !after.connected && after.present) {
+        announce(`${after.name} joined as the ${ROLE_LABEL[after.role]}.`);
+      } else if (before.connection === 'offline' && after.connection === 'online') {
+        audio.play('join');
+        announce(`${after.name} is back on the line.`);
+      } else if (before.connection !== 'offline' && after.connection === 'offline') {
         audio.play('drop');
-        toast(`${after.name} lost the line. ${state.game.status === 'playing' ? 'The clock is held until they are back.' : ''}`, 'error');
+        toast(`${after.name} lost the line.${state.game.phase === 'playing' ? ' The stage clock is held until they are back.' : ''}`, 'error');
       }
     }
     const prevHints = prev.game.puzzle?.hints.length ?? 0;
-    if (state.game.puzzle && prev.game.puzzle?.id === state.game.puzzle.id && state.game.puzzle.hints.length > prevHints) {
-      audio.play('hint');
-    }
+    if (state.game.puzzle && prev.game.puzzle?.id === state.game.puzzle.id && state.game.puzzle.hints.length > prevHints) audio.play('hint');
   }
   render();
 }
 
 function render() {
   const state = app.state;
-  if (!state) return;
-  renderStatus();
-  const status = state.game.status;
-  if (status === 'lobby') {
-    hideEndOverlay();
+  if (!state || app.screen === 'story') return;
+  renderPresence();
+  const phase = state.game.phase;
+  if (phase !== 'playing' && phase !== 'lobby' && Date.now() < app.holdUntil) return; // let the last solve land
+  if (phase === 'lobby') {
     showScreen('lobby');
     renderLobby();
-    return;
+  } else if (phase === 'playing') {
+    if (Date.now() < app.holdUntil && app.screen === 'game') {
+      renderStageIndicator();
+      return;
+    }
+    showScreen('game');
+    renderGame();
+  } else {
+    showScreen('result');
+    renderResultScreen();
   }
-  showScreen('game');
-  renderProgress();
-  tickTimer();
-  if (Date.now() < app.holdUntil) return; // let the "solved" moment play out
-  renderGame();
-  if (status === 'won' || status === 'lost') showEnd();
 }
 
-function renderStatus() {
+function renderPresence() {
+  tickConnection();
   const state = app.state;
-  if (!state || app.conn?.state !== 'open') return;
-  const pill = $('#conn-status');
+  const pill = $('#partner-status');
+  if (!state) {
+    pill.hidden = true;
+    return;
+  }
+  const p = partnerOf(state);
+  pill.hidden = false;
+  pill.className = 'partner-status';
   const text = pill.querySelector('.status-text');
-  const partner = partnerOf(state);
-  pill.classList.remove('is-live', 'is-lost', 'is-waiting');
-  if (!partner.present) {
+  if (!p.present) {
     pill.classList.add('is-waiting');
-    text.textContent = `Waiting for the ${ROLE_LABEL[partner.role]}`;
-  } else if (!partner.connected) {
-    pill.classList.add('is-lost');
-    text.textContent = `${partner.name} lost the line`;
-  } else {
+    text.textContent = `Waiting for the ${ROLE_LABEL[p.role]}`;
+  } else if (p.connection === 'online') {
     pill.classList.add('is-live');
-    text.textContent = `${partner.name} is on the line`;
+    text.textContent = `${p.name} is on the line`;
+  } else if (p.connection === 'reconnecting') {
+    pill.classList.add('is-waiting');
+    text.textContent = `${p.name} is reconnecting`;
+  } else {
+    pill.classList.add('is-lost');
+    text.textContent = `${p.name} lost the line`;
   }
 }
+
+// ---- Lobby and stage map ----------------------------------------------------------
 
 function renderLobby() {
   const state = app.state;
+  if (!state || !app.campaign) return;
+  const partner = partnerOf(state);
+  const together = partner.present && partner.connected;
   $('#lobby-code').textContent = formatRoomCode(state.room.code);
   $('#share-link').hidden = typeof navigator.share !== 'function';
+  $('#ticket').classList.toggle('is-compact', together);
+  $('#ticket-help').textContent = together
+    ? `${partner.name} is on the line. Pick a stage below; either of you can start it.`
+    : 'Send the link to your partner. They can also type the code on the start screen.';
 
   const seats = clear($('#seats'));
   for (const p of state.players) {
-    const lampClass = p.connected ? 'is-live' : p.present ? 'is-lost' : 'is-waiting';
+    const lampClass = p.connection === 'online' ? 'is-live' : p.present ? (p.connection === 'reconnecting' ? 'is-waiting' : 'is-lost') : 'is-waiting';
     const who = p.you
       ? 'This is you'
-      : p.connected
+      : p.connection === 'online'
         ? `${p.name} is on the line`
         : p.present
-          ? `${p.name} is reconnecting`
+          ? `${p.name} is ${p.connection === 'reconnecting' ? 'reconnecting' : 'away'}`
           : 'Waiting for someone to join';
     seats.append(
       h(
@@ -693,10 +689,10 @@ function renderLobby() {
     );
   }
 
-  const briefing = clear($('#briefing'));
   const role = state.you.role;
+  const briefing = clear($('#briefing'));
   briefing.append(
-    h('h2', {}, `You are the ${ROLE_LABEL[role]}`),
+    h('summary', {}, `You are the ${ROLE_LABEL[role]}: what that means`),
     h(
       'ul',
       {},
@@ -704,7 +700,7 @@ function renderLobby() {
         ? [
             'You are inside the exchange. You see symbols, lamps and machines your Operator cannot.',
             'Describe exactly what you see: shapes, colours, numbers and their order.',
-            'Only you can work the machines. Wait for your Operator’s instructions before you dial or patch.',
+            'Only you can work the machines. Wait for your Operator’s instructions before you act.',
             'You cannot see the manual, so ask questions and repeat instructions back.',
           ]
         : [
@@ -718,29 +714,26 @@ function renderLobby() {
   );
 
   for (const radio of $$('[name="lobby-mode"]')) radio.checked = radio.value === state.room.mode;
-
-  const both = state.players.every((p) => p.connected);
-  const partner = partnerOf(state);
-  $('#start-game').disabled = !both;
-  $('#lobby-wait').textContent = both
-    ? 'Both lines are open. Either of you can start.'
-    : partner.present
-      ? `Waiting for ${partner.name} to reconnect.`
-      : `Waiting for the ${ROLE_LABEL[partner.role]}. Send them the invite link.`;
+  map.render({ campaign: app.campaign, canPlay: partnerReady(), waitingText: waitingText(), mode: state.room.mode });
 }
 
-function renderProgress() {
+// ---- A stage in play ---------------------------------------------------------------
+
+function renderStageIndicator() {
   const game = app.state.game;
-  const list = clear($('#progress'));
-  game.progress.forEach((p, i) => {
-    const current = game.status === 'playing' && i === game.puzzleIndex;
-    list.append(
+  const stage = stageById(game.stageId);
+  if (!stage) return;
+  $('#stage-indicator-ref').textContent = `Stage ${stage.id}`;
+  const lamps = clear($('#puzzle-lamps'));
+  game.puzzles.forEach((p, i) => {
+    const current = game.phase === 'playing' && i === game.puzzleIndex && !p.solved;
+    lamps.append(
       h(
         'li',
-        { class: `${p.solved ? 'is-done' : ''} ${current ? 'is-current is-live' : ''}`, 'aria-current': current ? 'step' : null },
+        { class: `${p.solved ? 'is-done' : ''}${current ? ' is-current is-live' : ''}`, 'aria-current': current ? 'step' : null },
         h('span', { class: 'lamp-dot', 'aria-hidden': 'true' }),
-        h('span', { class: 'progress-title' }, p.title),
-        h('span', { class: 'sr-only' }, p.solved ? ' (solved)' : current ? ' (current)' : ''),
+        h('span', { class: 'puzzle-lamp-title' }, p.title),
+        h('span', { class: 'sr-only' }, p.solved ? ' (restored)' : current ? ' (current)' : ''),
       ),
     );
   });
@@ -749,41 +742,57 @@ function renderProgress() {
 function renderGame() {
   const state = app.state;
   const game = state.game;
-  const stage = $('#stage');
-  const key = game.puzzle ? `${game.puzzle.id}:${state.you.role}` : `end:${game.status}`;
+  const stage = stageById(game.stageId);
+  renderStageIndicator();
+  tickTimer();
 
+  if (app.stageKey !== game.runId) {
+    app.stageKey = game.runId;
+    app.announcedMinutes.clear();
+    const chapter = CHAPTERS[stage.chapter - 1];
+    const head = clear($('#stage-head'));
+    head.classList.remove('is-arriving');
+    head.append(
+      h('p', { class: 'stage-ref' }, `Stage ${stage.id}, ${chapter.title}`),
+      h('h1', { class: 'stage-title', tabindex: '-1' }, stage.title),
+      h('p', { class: 'stage-beat' }, stage.beat),
+    );
+    if (!prefersReducedMotion()) {
+      void head.offsetWidth;
+      head.classList.add('is-arriving');
+    }
+  }
+
+  const p = game.puzzle;
+  const key = `${p.id}:${state.you.role}`;
   if (key !== app.puzzleKey) {
-    if (app.controller) app.controller.destroy();
+    const moving = app.puzzleKey != null;
+    app.controller?.destroy();
     app.controller = null;
     app.puzzleKey = key;
-    clear(stage);
-    if (game.puzzle) {
-      const p = game.puzzle;
-      stage.append(
-        h(
-          'header',
-          { class: 'puzzle-head' },
-          h('p', { class: 'puzzle-count' }, `Puzzle ${p.number} of ${game.progress.length}`),
-          h('h1', { class: 'puzzle-title', id: 'puzzle-title', tabindex: '-1' }, p.title),
-          state.you.role === 'caller' ? h('p', { class: 'puzzle-intro' }, p.view.intro) : null,
-        ),
-      );
-      const body = h('div', {});
-      stage.append(body);
-      app.controller =
-        state.you.role === 'caller'
-          ? renderCaller(body, p, { audio, submit: submitAnswer })
-          : renderManual(body, p, { roomCode: state.room.code });
-      if (app.welcomedPuzzle && app.welcomedPuzzle !== p.id) $('#puzzle-title').focus();
-      app.welcomedPuzzle = p.id;
-    } else {
-      stage.append(
-        h(
-          'header',
-          { class: 'puzzle-head' },
-          h('h1', { class: 'puzzle-title', id: 'puzzle-title', tabindex: '-1' }, game.status === 'won' ? 'The line is open' : 'The line is dead'),
-        ),
-      );
+    const box = clear($('#stage'));
+    box.classList.remove('is-entering');
+    box.append(
+      h(
+        'header',
+        { class: 'puzzle-head' },
+        h('p', { class: 'puzzle-count' }, `Puzzle ${p.number} of ${game.puzzles.length}`),
+        h('h2', { class: 'puzzle-title', id: 'puzzle-title', tabindex: '-1' }, p.title),
+        state.you.role === 'caller' ? h('p', { class: 'puzzle-intro' }, p.view.intro) : null,
+      ),
+    );
+    const body = h('div', {});
+    box.append(body);
+    app.controller =
+      state.you.role === 'caller'
+        ? renderCaller(body, p, { audio, submit: submitAnswer })
+        : renderManual(body, p, { roomCode: state.room.code });
+    if (moving) {
+      if (!prefersReducedMotion()) {
+        void box.offsetWidth;
+        box.classList.add('is-entering');
+      }
+      $('#puzzle-title').focus({ preventScroll: false });
     }
   }
   renderHints();
@@ -795,7 +804,7 @@ function submitAnswer(answer) {
   const puzzle = app.state?.game.puzzle;
   if (!puzzle) return false;
   if (!app.conn?.send({ t: 'answer', puzzleId: puzzle.id, answer })) {
-    toast('Not connected, so that was not sent. Wait for the line to come back, then try again.', 'error');
+    toast('Not connected, so that was not sent. It will work again as soon as the line is back.', 'error');
     return false;
   }
   clearTimeout(app.answerTimer);
@@ -813,18 +822,19 @@ function settleAnswer() {
 
 function onAnswerResult(result) {
   clearTimeout(app.answerTimer);
-  app.controller?.onResult(result);
+  if (app.state?.game.puzzle?.id === result.puzzleId) app.controller?.onResult(result);
   if (result.correct) {
-    audio.play(result.won ? 'win' : 'success');
-    announce(result.won ? 'All three lines restored. You won.' : `Solved: ${result.solvedTitle}.`);
-    // Hold the solved machine on screen for a moment before the next puzzle.
-    app.holdUntil = Date.now() + (prefersReducedMotion() ? 900 : 1_800);
+    audio.play(result.stageComplete ? 'stage' : 'success');
+    announce(result.stageComplete ? 'Stage restored.' : `Solved: ${result.solvedTitle}.`);
+    // Hold the solved machine on screen for a moment. (The stage clock is
+    // already stopped for the change-over, so this pause costs nothing.)
+    app.holdUntil = Date.now() + (prefersReducedMotion() ? 700 : 1_600);
     clearTimeout(app.holdTimer);
     app.holdTimer = setTimeout(() => {
       app.holdUntil = 0;
       render();
     }, app.holdUntil - Date.now());
-    toast(result.won ? 'The last call goes through.' : `${result.solvedTitle}: solved.`, 'good', 2600);
+    if (!result.stageComplete) toast(`${result.solvedTitle}: restored.`, 'good', 2400);
   } else {
     audio.play('fail');
     if (app.state?.you.role === 'operator') {
@@ -855,14 +865,12 @@ function renderHints() {
   const button = h('button', { class: 'btn', type: 'button' }, `Read hint ${shown + 1} of ${puzzle.hintsTotal}`);
   const wait = h('p', { class: 'hints-wait', 'aria-live': 'polite' });
   button.addEventListener('click', () => {
-    if (!app.conn?.send({ t: 'hint', puzzleId: puzzle.id })) {
-      toast('Not connected. Try again when the line is back.', 'error');
-    }
+    if (!app.conn?.send({ t: 'hint', puzzleId: puzzle.id })) toast('Not connected. Try again when the line is back.', 'error');
   });
 
   panel.append(
     h('h2', { id: 'hints-title' }, 'Stuck?'),
-    h('p', { class: 'hints-lede' }, 'Each hint is clearer than the last. Your partner sees that you read one, not what it says.'),
+    h('p', { class: 'hints-lede' }, 'Each hint is clearer than the last, and costs 40 points. Your partner sees that you read one, not what it says.'),
   );
   if (shown) panel.append(h('ol', { class: 'hint-list' }, puzzle.hints.map((t) => h('li', {}, t))));
   panel.append(h('div', { class: 'hints-row' }, shown < puzzle.hintsTotal ? button : null, wait));
@@ -886,90 +894,74 @@ function renderHints() {
   if (readyAt > Date.now()) hintTicker = setInterval(tick, 1_000);
 }
 
-// ---- Timer --------------------------------------------------------------------
+// ---- Stage clock ----------------------------------------------------------------
 
 function tickTimer() {
   const state = app.state;
-  if (!state || app.screen !== 'game') return;
-  const timer = state.game.timer;
+  if (!state || app.screen !== 'game' || !state.game.timer) return;
+  const t = state.game.timer;
+  const elapsed = Date.now() - app.stateAt;
+  // The server restarts the clock by itself after a change-over; follow it here.
+  const resumed = t.resumesInMs > 0 && elapsed >= t.resumesInMs;
+  const running = t.running || resumed;
+  const activeNow = t.activeMs + (t.running ? elapsed : resumed ? elapsed - t.resumesInMs : 0);
   const el = $('#timer');
-  const value = $('#timer-value');
   const label = $('#timer-label');
-  const since = timer.running ? Date.now() - app.stateAt : 0;
-  el.classList.toggle('is-paused', !timer.running && state.game.status === 'playing');
-
-  if (timer.limitMs == null) {
-    label.textContent = 'Time taken';
-    value.textContent = formatClock(timer.elapsedMs + since);
+  const value = $('#timer-value');
+  const waiting = t.resumesInMs > 0 && !resumed;
+  el.classList.toggle('is-paused', !running);
+  if (t.limitMs == null) {
+    label.textContent = waiting ? 'Next line' : running ? `Stage clock, par ${formatClock(t.parMs)}` : 'Clock held';
+    value.textContent = formatClock(activeNow);
+    el.classList.toggle('is-over', activeNow > t.parMs);
     el.classList.remove('is-urgent');
     return;
   }
-  const remaining = Math.max(0, timer.remainingMs - since);
-  label.textContent = timer.running || state.game.status !== 'playing' ? 'Time left' : 'Clock held';
+  const remaining = Math.max(0, t.remainingMs - (activeNow - t.activeMs));
+  label.textContent = waiting ? 'Next line' : running ? 'Time left' : 'Clock held';
   value.textContent = formatClock(remaining);
-  el.classList.toggle('is-urgent', remaining < 3 * 60_000 && state.game.status === 'playing');
-  if (state.game.status === 'playing' && timer.running) {
-    audio.setIntensity(remaining < 5 * 60_000 ? 1 - remaining / (5 * 60_000) : 0);
-    for (const minutes of [5, 1]) {
+  el.classList.toggle('is-urgent', remaining < 2 * 60_000);
+  if (running) {
+    audio.setIntensity(remaining < 3 * 60_000 ? 1 - remaining / (3 * 60_000) : 0);
+    for (const minutes of [3, 1]) {
       if (remaining <= minutes * 60_000 && remaining > minutes * 60_000 - 2_000 && !app.announcedMinutes.has(minutes)) {
         app.announcedMinutes.add(minutes);
-        announce(`${minutes} ${minutes === 1 ? 'minute' : 'minutes'} left.`);
+        announce(`${minutes} ${minutes === 1 ? 'minute' : 'minutes'} left on the countdown.`);
       }
     }
   }
 }
 
-// ---- End of a run ---------------------------------------------------------------
+// ---- After a stage ---------------------------------------------------------------
 
-function showEnd() {
+function renderResultScreen() {
   const game = app.state.game;
-  if (app.endShownFor === game.status) return;
-  app.endShownFor = game.status;
-  const r = game.result;
-  const won = game.status === 'won';
-  audio.setMood(won ? 'won' : 'lost');
-  if (!won) audio.play('lose');
-  const wrong = Math.max(0, r.attempts - r.solved);
-  const current = game.progress[Math.min(game.puzzleIndex, game.progress.length - 1)];
-  showOverlay({
-    title: won ? 'The exchange remembers you' : 'The exchange forgot you',
-    tone: won ? 'is-won' : 'is-lost',
-    body: h(
-      'div',
-      {},
-      h(
-        'p',
-        {},
-        won
-          ? 'All three lines are restored and the last call went through. Somewhere in the dark, a switchboard lamp stays lit.'
-          : `The clock ran out during ${current.title}. Every lamp on the board goes dark.`,
-      ),
-      h(
-        'ul',
-        { class: 'stats' },
-        h('li', {}, h('strong', {}, formatClock(r.elapsedMs)), h('span', {}, game.mode === 'timed' ? 'on the clock' : 'time taken')),
-        h('li', {}, h('strong', {}, `${r.solved}/3`), h('span', {}, 'solved')),
-        h('li', {}, h('strong', {}, String(wrong)), h('span', {}, wrong === 1 ? 'wrong answer' : 'wrong answers')),
-        h('li', {}, h('strong', {}, String(r.hints)), h('span', {}, r.hints === 1 ? 'hint' : 'hints')),
-      ),
-      h('p', {}, 'Play again to return to the lobby with your partner. You can swap roles there.'),
-    ),
-    actions: [
-      { label: 'Leave room', onClick: () => leaveRoom() },
-      { label: won ? 'Play again' : 'Try again', primary: true, onClick: () => app.conn?.send({ t: 'restart' }) },
-    ],
-  });
-}
-
-function hideEndOverlay() {
-  if (app.endShownFor) {
-    app.endShownFor = null;
-    app.announcedMinutes.clear();
-    hideOverlay();
+  const key = `${game.result.runId}:${game.phase}`;
+  if (app.result?.key === key) {
+    app.result.ctl.setReady(partnerReady(), waitingText());
+    return;
   }
+  app.controller?.destroy();
+  app.controller = null;
+  app.puzzleKey = null;
+  app.result?.ctl.destroy();
+  map.focusStage(game.result.stageId);
+  const root = clear($('#result'));
+  const runId = game.result.runId;
+  const ctl = renderResult(root, {
+    game,
+    partnerReady: partnerReady(),
+    waitingText: waitingText(),
+    audio,
+    onContinue: () => app.conn?.send({ t: 'continue', from: runId }),
+    onReplay: () => app.conn?.send({ t: 'play', stageId: game.result.stageId }),
+    onMap: () => app.conn?.send({ t: 'map', from: runId }),
+  });
+  app.result = { key, ctl };
+  $('#result-title')?.focus({ preventScroll: true });
 }
 
-// ---- Lobby & game buttons ---------------------------------------------------------
+// ---- Room buttons -------------------------------------------------------------------
 
 function setupRoomControls() {
   $('#copy-link').addEventListener('click', async () => {
@@ -982,51 +974,76 @@ function setupRoomControls() {
   });
   $('#share-link').addEventListener('click', async () => {
     try {
-      await navigator.share({ title: 'Last Call', text: 'Join me in Last Call. I need you on the line.', url: inviteLink() });
+      await navigator.share({ title: 'Last Call', text: 'I’m on the line in Last Call and need a partner. Join my room:', url: inviteLink() });
     } catch {
       // cancelled
     }
   });
   $('#swap-roles').addEventListener('click', () => app.conn?.send({ t: 'swap' }));
-  $('#start-game').addEventListener('click', () => {
-    audio.unlock();
-    app.conn?.send({ t: 'start' });
-  });
   for (const radio of $$('[name="lobby-mode"]')) {
     radio.addEventListener('change', () => app.conn?.send({ t: 'mode', mode: radio.value }));
   }
   $('#leave-lobby').addEventListener('click', confirmLeave);
   $('#leave-game').addEventListener('click', confirmLeave);
+  $('#abandon-stage').addEventListener('click', () => {
+    const runId = app.state?.game.runId;
+    showOverlay({
+      title: 'Back to the stage map?',
+      body: 'This takes both of you back to the map. This attempt at the stage ends; you can play it again any time.',
+      dismissable: true,
+      actions: [
+        { label: 'Keep playing', onClick: hideOverlay },
+        {
+          label: 'Back to the map',
+          primary: true,
+          onClick: () => {
+            hideOverlay();
+            app.conn?.send({ t: 'map', from: runId });
+          },
+        },
+      ],
+    });
+  });
+  $('#conn-retry').addEventListener('click', () => app.conn?.reconnectNow());
 }
 
 // ---- Boot -------------------------------------------------------------------------
 
 function boot() {
-  setupAudioControls();
+  setupSettings({ audio, onReplayOpening: () => startOpening(returnFromOpening) });
   setupMenu();
   setupRoomControls();
   setInterval(tickTimer, 250);
   setInterval(tickConnection, 500);
-  $('#conn-retry').addEventListener('click', () => app.conn?.reconnectNow());
+
+  // Browsers only allow sound after a gesture; nothing plays before the first one.
+  const unlockOnce = () => {
+    audio.unlock();
+    if (audio.unlocked) {
+      document.removeEventListener('pointerdown', unlockOnce, true);
+      document.removeEventListener('keydown', unlockOnce, true);
+    }
+  };
+  document.addEventListener('pointerdown', unlockOnce, true);
+  document.addEventListener('keydown', unlockOnce, true);
 
   const raw = new URLSearchParams(location.search).get('room');
-  if (raw) {
-    const code = normalizeRoomCode(raw);
-    const valid = !roomCodeProblem(code);
-    const seat = valid && getSeat(code);
-    if (seat) {
-      // Returning to a room (reload, or back from another app): skip the opening.
-      enterRoom(code, seat.token);
-      return;
-    }
-    runIntro(() =>
-      valid
-        ? showMenu({ joinCode: code })
-        : showMenu({ banner: `That invite link is broken: ${roomCodeProblem(code)} Ask your friend for the code.` }),
-    );
+  const code = raw ? normalizeRoomCode(raw) : null;
+  const valid = code && !roomCodeProblem(code);
+  const seat = valid && getSeat(code);
+  if (seat) {
+    // Back in a room (reload, or returning from another app): straight in.
+    enterRoom(code, seat.token);
     return;
   }
-  runIntro(() => showMenu());
+  const toMenu = () =>
+    raw
+      ? valid
+        ? showMenu({ joinCode: code })
+        : showMenu({ banner: `That invite link is broken: ${roomCodeProblem(code)} Ask your friend for the code.` })
+      : showMenu();
+  if (openingSeen()) toMenu();
+  else startOpening(toMenu);
 }
 
 boot();

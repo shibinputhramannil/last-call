@@ -1,25 +1,31 @@
+import { createHash } from 'node:crypto';
+import { readFile, stat } from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { normalizeRoomCode, roomCodeProblem, ROLES, MODES } from '../shared/constants.js';
+import { formatRoomCode, normalizeRoomCode, roomCodeProblem, ROLES, MODES } from '../shared/constants.js';
 import { createLogger } from './logger.js';
 import { RateLimiter } from './rateLimit.js';
 import { RoomManager } from './rooms.js';
+import { createSigner } from './signing.js';
 import { createStaticHandler, securityHeaders } from './static.js';
+import { createStore, resolveSecret } from './store.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const MAX_BODY = 2_048;
+const INDEX_FILE = path.join(ROOT, 'public', 'index.html');
+/** Room requests carry the browser's signed campaign progress, a few KB at most. */
+const MAX_BODY = 16 * 1024;
 const MAX_WS_PER_IP = 12;
 const HELLO_TIMEOUT_MS = 10_000;
 const HEARTBEAT_MS = 25_000;
 /**
- * Players' browsers send an app-level ping every 15 s (about once a minute in
- * throttled background tabs). Some proxies, including Render's, answer
- * WebSocket pings themselves, so silence is the only reliable sign that a
- * player is gone.
+ * Browsers send an app-level ping every 15 s from a Web Worker, whose timers
+ * keep running in background tabs. Some proxies, including Render's, answer
+ * WebSocket protocol pings themselves, so app-level silence is the reliable
+ * sign that a player has gone.
  */
-const SILENCE_LIMIT_MS = 90_000;
+const SILENCE_LIMIT_MS = 70_000;
 /** Time for "the server is restarting" messages to reach players before sockets close. */
 const SHUTDOWN_FLUSH_MS = 750;
 /** After this, remaining HTTP connections are cut so shutdown always finishes. */
@@ -29,18 +35,37 @@ const RESTARTING = {
   message: 'The game server is restarting. Wait a minute, then try again.',
 };
 
+const SHARE = {
+  title: 'Last Call: a two-player telephone mystery',
+  description:
+    'One of you is trapped in an abandoned telephone exchange. The other holds the manual. Talk it through to restore 200 lines and connect the last call.',
+  inviteTitle: (code) => `Join my call on Last Call (room ${formatRoomCode(code)})`,
+  inviteDescription:
+    'I’m on the line and need a partner. One of us sees the machines, the other holds the manual: talk it through to solve the exchange together.',
+};
+
+const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
 /**
  * Builds the HTTP + WebSocket server without listening, so tests can run it on
  * an ephemeral port.
  */
 export function createApp(
   config,
-  { narrator = null, log = createLogger('info'), heartbeatMs = HEARTBEAT_MS, silenceLimitMs = SILENCE_LIMIT_MS } = {},
+  {
+    narrator = null,
+    log = createLogger('info'),
+    store = createStore({ dataDir: config.dataDir, log }),
+    signer = createSigner(resolveSecret({ secret: config.saveSecret, dataDir: config.dataDir }).secret),
+    heartbeatMs = HEARTBEAT_MS,
+    silenceLimitMs = SILENCE_LIMIT_MS,
+  } = {},
 ) {
   const startedAt = Date.now();
   let draining = false;
   let shutdownPromise = null;
-  const rooms = new RoomManager({ idleMs: config.roomIdleMs, maxMs: config.roomMaxMs, narrator, log });
+  const rooms = new RoomManager({ idleMs: config.roomIdleMs, maxMs: config.roomMaxMs, narrator, signer, store, log });
+  rooms.restore();
   const serveStatic = createStaticHandler({
     '/shared/': path.join(ROOT, 'shared'),
     '/': path.join(ROOT, 'public'),
@@ -75,6 +100,13 @@ export function createApp(
     if (req.socket.encrypted) return true;
     if (!config.trustProxy) return false;
     return String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+  }
+
+  /** The public address for absolute share links: PUBLIC_URL, else the request's own host. */
+  function publicOrigin(req) {
+    if (config.publicUrl) return config.publicUrl;
+    const host = String(req.headers.host || '');
+    return `${req.isHttps ? 'https' : 'http'}://${/^[a-z0-9.-]+(:\d{1,5})?$/i.test(host) ? host : 'localhost'}`;
   }
 
   function sendJson(req, res, status, body, extra = {}) {
@@ -153,7 +185,7 @@ export function createApp(
       }
       const role = ROLES.includes(body.role) ? body.role : 'caller';
       const mode = MODES.includes(body.mode) ? body.mode : 'timed';
-      const result = rooms.create({ name: body.name, role, mode });
+      const result = rooms.create({ name: body.name, role, mode, progress: body.progress });
       if (result.error) return sendJson(req, res, result.error === 'BUSY' ? 503 : 400, result);
       return sendJson(req, res, 201, { code: result.room.code, token: result.seat.token, role: result.seat.role });
     }
@@ -175,7 +207,7 @@ export function createApp(
         } catch {
           return sendJson(req, res, 400, { error: 'BAD_REQUEST', message: 'The request could not be read.' });
         }
-        const result = rooms.join(code, { name: body.name });
+        const result = rooms.join(code, { name: body.name, progress: body.progress });
         if (result.error === 'EXPIRED') return sendJson(req, res, 410, { error: 'EXPIRED', message: result.message });
         if (result.error) {
           const [status, message] = joinErrors[result.error];
@@ -194,6 +226,36 @@ export function createApp(
     return [200, { status: 'ok', uptimeSeconds: Math.round((Date.now() - startedAt) / 1000), rooms: roomCount, players }];
   }
 
+  // The page itself carries share-preview tags with absolute URLs, so link
+  // previews (WhatsApp and others) work without running any JavaScript.
+  let indexCache = { mtimeMs: -1, text: '' };
+  async function indexTemplate() {
+    const info = await stat(INDEX_FILE);
+    if (info.mtimeMs !== indexCache.mtimeMs) indexCache = { mtimeMs: info.mtimeMs, text: await readFile(INDEX_FILE, 'utf8') };
+    return indexCache.text;
+  }
+
+  async function serveIndex(req, res, url) {
+    const origin = publicOrigin(req);
+    const code = normalizeRoomCode(url.searchParams.get('room') || '');
+    const room = code && !roomCodeProblem(code) ? code : null;
+    const values = {
+      ORIGIN: origin,
+      SHARE_URL: room ? `${origin}/?room=${room}` : `${origin}/`,
+      SHARE_TITLE: room ? SHARE.inviteTitle(room) : SHARE.title,
+      SHARE_DESCRIPTION: room ? SHARE.inviteDescription : SHARE.description,
+    };
+    const body = (await indexTemplate()).replace(/\{\{([A-Z_]+)\}\}/g, (_, key) => escapeHtml(values[key] ?? ''));
+    const etag = `W/"${createHash('sha1').update(body).digest('base64url').slice(0, 20)}"`;
+    const headers = { ...securityHeaders(req), 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', ETag: etag };
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, headers);
+      return res.end();
+    }
+    res.writeHead(200, { ...headers, 'Content-Length': Buffer.byteLength(body) });
+    res.end(req.method === 'HEAD' ? undefined : body);
+  }
+
   const server = http.createServer(async (req, res) => {
     let url;
     try {
@@ -209,6 +271,9 @@ export function createApp(
         return sendJson(req, res, status, body);
       }
       if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
+      if ((url.pathname === '/' || url.pathname === '/index.html') && (req.method === 'GET' || req.method === 'HEAD')) {
+        return await serveIndex(req, res, url);
+      }
       if (await serveStatic(req, res, url.pathname)) return;
       res.writeHead(404, { ...securityHeaders(req), 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('Not found');
@@ -224,7 +289,7 @@ export function createApp(
 
   // ---- WebSocket ----------------------------------------------------------------
 
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 });
 
   function originAllowed(req) {
     const origin = req.headers.origin;
@@ -314,7 +379,7 @@ export function createApp(
         if (roomCodeProblem(code) || typeof msg.token !== 'string') {
           return closeWith('ROOM_NOT_FOUND', 'That room code is not valid.', 4004);
         }
-        const result = rooms.attach(code, msg.token, ws);
+        const result = rooms.attach(code, msg.token, ws, { ticket: msg.ticket, progress: msg.progress });
         if (result.error) return closeWith(result.error, result.message, 4004);
         clearTimeout(helloTimer);
         room = result.room;
@@ -363,9 +428,9 @@ export function createApp(
   pruner.unref();
 
   /**
-   * Graceful shutdown: stop taking new rooms and connections, tell every player
-   * the server is restarting (rooms live in memory and cannot survive), give
-   * those messages a moment to arrive, then close everything.
+   * Graceful shutdown: stop taking new rooms and connections, save every room,
+   * tell players the server is restarting (their browsers reconnect and resume),
+   * give those messages a moment to arrive, then close everything.
    */
   function shutdown({ flushMs = SHUTDOWN_FLUSH_MS } = {}) {
     if (shutdownPromise) return shutdownPromise;

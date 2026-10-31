@@ -1,7 +1,7 @@
 {
   "name": "Last Call",
   "short_name": "Last Call",
-  "description": "A two-player puzzle game set in an abandoned telephone exchange.",
+  "description": "A two-player telephone mystery: one sees the machines, one holds the manual. 200 stages to restore.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#1c1411",

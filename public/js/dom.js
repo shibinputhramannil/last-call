@@ -11,6 +11,13 @@ function apply(node, props) {
     if (key === 'class') node.setAttribute('class', value);
     else if (key === 'text') node.textContent = value;
     else if (key === 'dataset') Object.assign(node.dataset, value);
+    else if (key === 'style') {
+      // The content security policy forbids style attributes; the CSSOM is allowed.
+      for (const decl of String(value).split(';')) {
+        const i = decl.indexOf(':');
+        if (i > 0) node.style.setProperty(decl.slice(0, i).trim(), decl.slice(i + 1).trim());
+      }
+    }
     else if (key.startsWith('on') && typeof value === 'function') node.addEventListener(key.slice(2), value);
     else if (value === true) node.setAttribute(key, '');
     else node.setAttribute(key, String(value));
@@ -44,13 +51,22 @@ export function clear(node) {
   return node;
 }
 
-export const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+/** True when motion should be minimal: the player's setting, or their device's if they chose "match my device". */
+export const prefersReducedMotion = () => document.documentElement.dataset.motion === 'reduce';
 
 export function formatClock(ms) {
   const total = Math.max(0, Math.ceil(ms / 1000));
   const m = Math.floor(total / 60);
   const sec = total % 60;
   return `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+/** "4 min 05 s" style, for score explanations. */
+export function formatDuration(ms) {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(total / 60);
+  const sec = total % 60;
+  return m ? `${m} min ${String(sec).padStart(2, '0')} s` : `${sec} s`;
 }
 
 export function formatTime(ts) {

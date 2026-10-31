@@ -4,42 +4,56 @@ import { GLYPHS, glyphSvg, stampSvg } from './art.js';
 import { h } from './dom.js';
 import { loadNotes, saveNotes } from './store.js';
 
-const LAMP_PREFIX = /^(Green|Amber|Red|White|Blue) lamp/;
+const SWATCHES = new Set(['green', 'amber', 'red', 'blue', 'white']);
+
+const cadenceMarks = (cadence) =>
+  h(
+    'span',
+    { class: 'cadence', 'aria-hidden': 'true' },
+    [...cadence].map((c) => h('i', { class: c === 'L' ? 'long' : 'short' })),
+  );
 
 const BLOCKS = {
-  steps: (b) => [h('h3', {}, b.heading), h('ol', {}, b.items.map((t) => h('li', {}, t)))],
+  steps: (b, heading) => [heading, h('ol', {}, b.items.map((t) => h('li', {}, t)))],
 
-  rules: (b) => [
-    h('h3', {}, b.heading),
+  rules: (b, heading) => [
+    heading,
     h(
       'ul',
       { class: 'rules' },
-      b.items.map((t) => {
-        const match = t.match(LAMP_PREFIX);
-        return h('li', {}, match ? h('span', { class: 'swatch', 'data-color': match[1].toLowerCase(), 'aria-hidden': 'true' }) : null, t);
-      }),
+      b.items.map((item) =>
+        h('li', {}, SWATCHES.has(item.key) && b.id === 'lamps' ? h('span', { class: 'swatch', 'data-color': item.key, 'aria-hidden': 'true' }) : null, item.text),
+      ),
     ),
   ],
 
-  glyphs: (b) => [
-    h('h3', {}, b.heading),
+  glyphs: (b, heading) => [
+    heading,
+    b.nightColumn ? h('p', { class: 'caption' }, 'Each glyph has a DAY digit and a NIGHT digit. The exchange clock rule says which to use.') : null,
     h(
       'ul',
-      { class: 'glyph-directory' },
+      { class: `glyph-directory${b.nightColumn ? ' has-night' : ''}` },
       b.entries.map((e) =>
         h(
           'li',
           {},
           glyphSvg(e.glyph, { label: `${e.name}: ${GLYPHS[e.glyph].description}` }),
           h('span', { class: 'glyph-name' }, e.name),
-          h('span', { class: 'glyph-digit', 'aria-label': `digit ${e.digit}` }, String(e.digit)),
+          b.nightColumn
+            ? h(
+                'span',
+                { class: 'glyph-digits' },
+                h('span', { class: 'glyph-digit', 'aria-label': `day digit ${e.day}` }, h('small', { 'aria-hidden': 'true' }, 'day'), String(e.day)),
+                h('span', { class: 'glyph-digit', 'aria-label': `night digit ${e.night}` }, h('small', { 'aria-hidden': 'true' }, 'night'), String(e.night)),
+              )
+            : h('span', { class: 'glyph-digit', 'aria-label': `digit ${e.day}` }, String(e.day)),
         ),
       ),
     ),
   ],
 
-  grid: (b) => [
-    h('h3', {}, b.heading),
+  grid: (b, heading) => [
+    heading,
     h('p', { class: 'caption' }, b.caption),
     h(
       'div',
@@ -74,8 +88,8 @@ const BLOCKS = {
     ),
   ],
 
-  tapecode: (b) => [
-    h('h3', {}, b.heading),
+  tapecode: (b, heading) => [
+    heading,
     h('p', { class: 'caption' }, b.caption),
     h(
       'ul',
@@ -91,8 +105,44 @@ const BLOCKS = {
     ),
   ],
 
-  roster: (b) => [
-    h('h3', {}, b.heading),
+  cadences: (b, heading) => [
+    heading,
+    h('p', { class: 'caption' }, b.caption),
+    h(
+      'ul',
+      { class: 'cadence-directory' },
+      b.entries.map((e) => h('li', {}, h('span', { class: 'cd-name' }, e.household), cadenceMarks(e.cadence), h('span', { class: 'cd-words' }, e.words))),
+    ),
+  ],
+
+  procedure: (b, heading) => [
+    heading,
+    h(
+      'ul',
+      { class: 'procedure' },
+      b.entries.map((e) => h('li', {}, h('span', { class: 'proc-lamp', 'aria-label': `Lamp ${e.lamp}` }, e.lamp), h('span', {}, e.text))),
+    ),
+  ],
+
+  keys: (b, heading) => [
+    heading,
+    h(
+      'ul',
+      { class: 'glyph-directory wheel-keys' },
+      b.entries.map((e) =>
+        h(
+          'li',
+          {},
+          glyphSvg(e.glyph, { label: `${e.name}: ${GLYPHS[e.glyph].description}` }),
+          h('span', { class: 'glyph-name' }, e.name),
+          h('span', { class: 'glyph-digit', 'aria-label': `shift ${e.shift}` }, String(e.shift)),
+        ),
+      ),
+    ),
+  ],
+
+  roster: (b, heading) => [
+    heading,
     h('p', { class: 'caption' }, b.caption),
     h('ul', { class: 'roster' }, b.names.map((n) => h('li', {}, n))),
   ],
@@ -116,7 +166,7 @@ export function renderManual(root, puzzle, { roomCode }) {
         h('h2', { class: 'manual-title' }, puzzle.title),
       ),
       h('p', { class: 'manual-intro' }, view.intro),
-      view.blocks.map((b) => (BLOCKS[b.type] ? BLOCKS[b.type](b) : null)),
+      view.blocks.map((b, i) => (BLOCKS[b.type] ? BLOCKS[b.type](b, h('h3', {}, `${puzzle.number}.${i + 1} ${b.heading}`)) : null)),
       h(
         'div',
         { class: 'notepad' },

@@ -1,4 +1,4 @@
-import { GLYPHS, STAMPS } from '/shared/art.js';
+import { CAPS, GLYPHS, STAMPS, describeCadence } from '/shared/art.js';
 import { s } from './dom.js';
 
 /** An exchange glyph as inline SVG. The label is a plain visual description. */
@@ -34,4 +34,4 @@ export function stampSvg(id, { label } = {}) {
   );
 }
 
-export { GLYPHS, STAMPS };
+export { CAPS, GLYPHS, STAMPS, describeCadence };

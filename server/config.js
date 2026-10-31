@@ -29,6 +29,29 @@ function headerName(name) {
   return raw;
 }
 
+function origin(...names) {
+  for (const name of names) {
+    const raw = (process.env[name] || '').trim();
+    if (!raw) continue;
+    let url;
+    try {
+      url = new URL(raw);
+    } catch {
+      throw new Error(`${name} must be a full address such as https://last-call.example.com (got "${raw}")`);
+    }
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error(`${name} must start with https:// or http://`);
+    return url.origin;
+  }
+  return null;
+}
+
+function secret(name) {
+  const raw = (process.env[name] || '').trim();
+  if (!raw) return null;
+  if (raw.length < 16) throw new Error(`${name} must be at least 16 characters long`);
+  return raw;
+}
+
 function oneOf(name, options, fallback) {
   const raw = (process.env[name] || '').trim().toLowerCase();
   if (!raw) return fallback;
@@ -47,6 +70,10 @@ export function loadConfig() {
       .split(',')
       .map((s) => s.trim().replace(/\/$/, ''))
       .filter(Boolean),
+    // Absolute address for share previews. Render sets RENDER_EXTERNAL_URL itself.
+    publicUrl: origin('PUBLIC_URL', 'RENDER_EXTERNAL_URL'),
+    dataDir: (process.env.DATA_DIR || '').trim() || null,
+    saveSecret: secret('SAVE_SECRET'),
     roomIdleMs: int('ROOM_IDLE_MINUTES', 30, { min: 1, max: 24 * 60 }) * 60_000,
     roomMaxMs: int('ROOM_MAX_HOURS', 4, { min: 1, max: 72 }) * 3_600_000,
     narrator: {

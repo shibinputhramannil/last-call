@@ -2,8 +2,8 @@
 # One web service serves the game page, the room API and the WebSocket from a
 # single Node process. Set up: Render Dashboard > New > Blueprint > this repo.
 #
-# Keep this service at ONE instance and do not turn on autoscaling: rooms live
-# in server memory, so a second instance would not see the first one's rooms.
+# Keep this service at ONE instance and do not turn on autoscaling: live rooms
+# are held by one server process, so a second instance would not see them.
 services:
   - type: web
     name: last-call
@@ -26,9 +26,24 @@ services:
         value: cf-connecting-ip
       - key: LOG_LEVEL
         value: info
+      # Signs the campaign progress and room tickets that players' browsers
+      # keep. With it, a restart or redeploy never loses a team's progress and
+      # rooms rebuild themselves when players reconnect. Render generates it
+      # once; keep it unchanged, or every saved game stops verifying.
+      - key: SAVE_SECRET
+        generateValue: true
       # Optional Claude narrator. Leave off unless you add an API key below.
       - key: ENABLE_AI_NARRATOR
         value: "false"
       # Secret: Render asks for it when the Blueprint is created; leave blank to skip.
       - key: ANTHROPIC_API_KEY
         sync: false
+      # Optional, for full room persistence (chat and the stage in progress
+      # survive restarts too). Needs a paid instance with a persistent disk,
+      # and a disk turns off zero-downtime deploys. Uncomment both blocks:
+      # - key: DATA_DIR
+      #   value: /var/data
+    # disk:
+    #   name: last-call-data
+    #   mountPath: /var/data
+    #   sizeGB: 1

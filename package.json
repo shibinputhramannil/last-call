@@ -1,8 +1,8 @@
 {
   "name": "last-call",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "A two-player co-operative puzzle game set in an abandoned telephone exchange.",
+  "description": "A two-player co-operative puzzle game set in an abandoned telephone exchange: 200 stages, one Caller, one Operator.",
   "type": "module",
   "main": "server/index.js",
   "engines": {
@@ -11,7 +11,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "test": "node --test",
+    "test": "node --test \"test/*.test.js\"",
     "lint": "eslint .",
     "check": "npm run lint && npm test"
   },

@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import WebSocket from 'ws';
 import { createApp } from '../server/app.js';
 import { silentLogger } from '../server/logger.js';
+import { PUZZLES } from '../server/puzzles/index.js';
+
+const answerFor = (room) => PUZZLES[room.game.round.type].solution(room.game.round.state);
 
 const config = {
   trustProxy: false,
@@ -87,7 +90,33 @@ test('cross-site WebSocket connections are refused', async () => {
   await assert.rejects(client.opened);
 });
 
-test('two players can create, join, chat, play, and reconnect', async () => {
+test('the page carries absolute share-preview tags in its first response, for the game and for invites', async () => {
+  const page = await (await fetch(base + '/')).text();
+  const meta = (html, prop) => html.match(new RegExp(`<meta (?:property|name)="${prop}" content="([^"]*)"`))?.[1];
+  assert.equal(meta(page, 'og:title'), 'Last Call: a two-player telephone mystery');
+  assert.match(meta(page, 'og:description'), /trapped|manual/i);
+  assert.match(meta(page, 'og:image'), /^http:\/\/127\.0\.0\.1:\d+\/og\/last-call-poster-v1\.jpg$/);
+  assert.equal(meta(page, 'og:image:width'), '1200');
+  assert.equal(meta(page, 'og:image:height'), '630');
+  assert.ok(meta(page, 'og:image:alt').length > 20);
+  assert.equal(meta(page, 'og:url'), `${base}/`);
+  assert.equal(meta(page, 'twitter:card'), 'summary_large_image');
+  assert.ok(!page.includes('{{'), 'every placeholder is filled');
+  const poster = await fetch(meta(page, 'og:image'));
+  assert.equal(poster.status, 200);
+  assert.equal(poster.headers.get('content-type'), 'image/jpeg');
+  assert.ok(Number(poster.headers.get('content-length')) < 300_000, 'small enough for WhatsApp');
+
+  const invite = await (await fetch(base + '/?room=k7q-m3x')).text();
+  assert.equal(meta(invite, 'og:url'), `${base}/?room=K7QM3X`);
+  assert.match(meta(invite, 'og:title'), /K7Q-M3X/);
+  assert.equal(meta(invite, 'og:image'), meta(page, 'og:image'), 'invites share the game poster');
+  const junk = await (await fetch(base + '/?room=%22%3E%3Cscript%3E')).text();
+  assert.ok(!junk.includes('"><script>'), 'query strings are never echoed raw');
+  assert.equal(meta(junk, 'og:url'), `${base}/`);
+});
+
+test('two players can create, join, chat, play a whole stage, continue, and reconnect', async () => {
   const created = await post('/api/rooms', { name: 'Ada', role: 'caller', mode: 'timed' });
   assert.equal(created.status, 201);
   const host = await created.json();
@@ -104,44 +133,66 @@ test('two players can create, join, chat, play, and reconnect', async () => {
   const caller = connect(host.code, host.token);
   const operator = connect(host.code, guest.token);
   await caller.waitFor((m) => m.t === 'welcome');
-  await operator.waitFor((m) => m.t === 'welcome');
+  const opWelcome = await operator.waitFor((m) => m.t === 'welcome');
+  assert.equal(opWelcome.campaign.frontier, '1-1');
 
   operator.send({ t: 'chat', clientId: 'op-1', text: 'Describe the first plate.' });
   const heard = await caller.waitFor((m) => m.t === 'chat' && m.message.clientId === 'op-1');
   assert.equal(heard.message.role, 'operator');
   assert.equal(heard.message.name, 'Grace');
+  const ack = await operator.waitFor((m) => m.t === 'chat' && m.message.clientId === 'op-1');
+  assert.equal(ack.message.id, heard.message.id, 'the sender gets the same message back as its acknowledgement');
 
-  caller.send({ t: 'start' });
-  await caller.waitFor((m) => m.t === 'state' && m.state.game.status === 'playing');
-  await operator.waitFor((m) => m.t === 'state' && m.state.game.status === 'playing');
+  caller.send({ t: 'ping', id: 7 });
+  assert.equal((await caller.waitFor((m) => m.t === 'pong')).id, 7);
 
+  caller.send({ t: 'play', stageId: '1-1' });
+  await operator.waitFor((m) => m.t === 'state' && m.state.game.phase === 'playing');
   const room = app.rooms.rooms.get(host.code);
-  const secret = room.game.round.state;
 
-  operator.send({ t: 'answer', puzzleId: 'dead-line', answer: secret.answer });
+  const firstId = room.game.round.id;
+  operator.send({ t: 'answer', puzzleId: firstId, answer: answerFor(room) });
   await operator.waitFor((m) => m.t === 'notice' && m.code === 'NOT_ALLOWED');
 
-  caller.send({ t: 'answer', puzzleId: 'dead-line', answer: secret.answer });
+  caller.send({ t: 'answer', puzzleId: firstId, answer: answerFor(room) });
   const solved = await operator.waitFor((m) => m.t === 'answer-result');
   assert.equal(solved.correct, true);
-  await caller.waitFor((m) => m.t === 'state' && m.state.game.puzzle?.id === 'patch-bay');
+  assert.equal(solved.stageComplete, false);
+  await caller.waitFor((m) => m.t === 'state' && m.state.game.puzzleIndex === 1);
 
-  // Neither browser ever received the other role's private data or an answer.
-  const callerJson = JSON.stringify(caller.received);
-  const operatorJson = JSON.stringify(operator.received);
-  assert.ok(!callerJson.includes('"directory"') && !callerJson.includes('"digit"'));
-  assert.ok(!callerJson.includes('"grid"') && !callerJson.includes('"routes"'));
-  assert.ok(!operatorJson.includes('"plates"') && !operatorJson.includes('"lines"'));
-  assert.ok(!operatorJson.includes('"answer"') && !callerJson.includes('"answer":"'));
-
-  // The operator drops: the clock pauses. They come back and see the history.
+  // The operator drops mid-stage and comes back: same puzzle, same chat, same clock.
+  const before = room.game.viewFor('operator', Date.now()).puzzle;
   await operator.close();
-  await caller.waitFor((m) => m.t === 'state' && m.state.game.timer.running === false);
+  await caller.waitFor((m) => m.t === 'state' && m.state.players.some((p) => p.connection === 'reconnecting'));
   const again = connect(host.code, guest.token);
   const welcome = await again.waitFor((m) => m.t === 'welcome');
   assert.equal(welcome.state.you.role, 'operator');
+  assert.equal(welcome.state.game.puzzle.id, before.id);
+  assert.deepEqual(welcome.state.game.puzzle.view, before.view);
   assert.ok(welcome.chat.some((m) => m.clientId === 'op-1'));
-  await caller.waitFor((m) => m.t === 'state' && m.state.game.timer.running === true);
+  assert.ok(!welcome.chat.some((m) => /lost the line/.test(m.text || '')), 'a short drop is not announced');
+
+  // Finish the stage.
+  for (let i = 1; i < 3; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 2_600));
+    caller.send({ t: 'answer', puzzleId: room.game.round.id, answer: answerFor(room) });
+    await again.waitFor((m) => m.t === 'answer-result' && m.puzzleId.endsWith(`.${i + 1}`));
+  }
+  const done = await again.waitFor((m) => m.t === 'state' && m.state.game.phase === 'complete');
+  assert.equal(done.state.game.result.stars, 3);
+  const save = await caller.waitFor((m) => m.t === 'progress' && m.campaign.completed === 1);
+  assert.equal(typeof save.token, 'string');
+
+  // Neither browser ever received the other role's private data or an answer.
+  const callerJson = JSON.stringify(caller.received);
+  const operatorJson = JSON.stringify(again.received);
+  assert.ok(!callerJson.includes('"blocks"') && !callerJson.includes('"directory"'));
+  assert.ok(!operatorJson.includes('"plates"') && !operatorJson.includes('"lines"') && !operatorJson.includes('"columns"'));
+  assert.ok(!callerJson.includes('"answer"') && !operatorJson.includes('"answer"'));
+
+  again.send({ t: 'continue', from: done.state.game.result.runId });
+  const next = await caller.waitFor((m) => m.t === 'state' && m.state.game.phase === 'playing' && m.state.game.stageId === '1-2');
+  assert.equal(next.state.game.puzzleIndex, 0);
 
   await caller.close();
   await again.close();

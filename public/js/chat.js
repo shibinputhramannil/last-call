@@ -1,8 +1,11 @@
 import { MAX_CHAT_LENGTH } from '/shared/constants.js';
 import { $, h, clear, formatTime } from './dom.js';
+import { loadDraft, loadPending, saveDraft, savePending } from './store.js';
 
 const ROLE_LABEL = { caller: 'Caller', operator: 'Operator' };
-const ACK_TIMEOUT_MS = 8_000;
+const ACK_TIMEOUT_MS = 6_000;
+/** Unacknowledged messages are re-sent (same id, so never duplicated) this many times before failing. */
+const AUTO_RETRIES = 2;
 
 const newId = () =>
   (crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`).slice(0, 36);
@@ -21,6 +24,7 @@ export class ChatPanel {
     this.toggle = $('#chat-toggle');
     this.count = $('#chat-count');
     this.you = null;
+    this.code = null;
     this.connected = false;
     this.pending = new Map(); // clientId -> { text, ts, status, el, timer }
     this.seen = new Set();
@@ -41,6 +45,7 @@ export class ChatPanel {
     this.input.addEventListener('input', () => {
       this.autosize();
       this.updateCount();
+      if (this.code) saveDraft(this.code, this.input.value);
       const now = Date.now();
       if (this.input.value.trim() && now - this.lastTypingSent > 2_000) {
         this.lastTypingSent = now;
@@ -60,16 +65,38 @@ export class ChatPanel {
     });
   }
 
-  reset() {
+  /** Starts a room's chat, restoring this tab's unsent messages and draft. */
+  reset(code) {
     clear(this.log);
     this.pending.forEach((p) => clearTimeout(p.timer));
     this.pending.clear();
     this.seen.clear();
     this.setUnread(0);
     this.typingEl.textContent = '';
-    this.input.value = '';
+    this.code = code;
+    this.input.value = code ? loadDraft(code) : '';
     this.autosize();
+    this.updateCount();
+    for (const saved of code ? loadPending(code) : []) {
+      if (typeof saved?.clientId !== 'string' || typeof saved.text !== 'string') continue;
+      const item = this.makeItem(saved.clientId, saved.text, saved.ts);
+      this.pending.set(item.clientId, item);
+      this.log.append(item.el);
+      this.setPendingState(item, 'queued');
+    }
     this.renderEmpty();
+  }
+
+  persist() {
+    if (!this.code) return;
+    const keep = [...this.pending.values()].filter((p) => !p.rejected);
+    savePending(this.code, keep.map(({ clientId, text, ts }) => ({ clientId, text, ts })));
+  }
+
+  makeItem(clientId, text, ts = Date.now()) {
+    const item = { clientId, text, ts, status: 'sending', el: null, timer: null, tries: 0 };
+    item.el = this.renderMessage({ kind: 'player', role: this.you?.role, name: this.you?.name, text, ts, clientId }, true);
+    return item;
   }
 
   setIdentity(you) {
@@ -140,6 +167,7 @@ export class ChatPanel {
       }
       this.log.append(item.el);
     }
+    this.persist();
     this.renderEmpty();
     this.scrollToEnd(true);
     this.flush();
@@ -160,33 +188,40 @@ export class ChatPanel {
     if (!text) return;
     this.post(text);
     this.input.value = '';
+    if (this.code) saveDraft(this.code, '');
     this.autosize();
     this.updateCount();
   }
 
   post(text) {
-    const clientId = newId();
-    const item = { clientId, text, ts: Date.now(), status: 'sending', el: null, timer: null };
-    item.el = this.renderMessage(
-      { kind: 'player', role: this.you?.role, name: this.you?.name, text, ts: item.ts, clientId },
-      true,
-    );
-    this.pending.set(clientId, item);
+    const item = this.makeItem(newId(), text);
+    this.pending.set(item.clientId, item);
+    this.persist();
     this.log.querySelector('.chat-empty')?.remove();
     this.log.append(item.el);
     this.scrollToEnd(true);
     this.transmit(item);
   }
 
-  transmit(item) {
+  transmit(item, { manual = true } = {}) {
     clearTimeout(item.timer);
+    if (manual) item.tries = 0;
     if (!this.send({ t: 'chat', clientId: item.clientId, text: item.text })) {
       this.setPendingState(item, 'queued');
       return;
     }
     this.setPendingState(item, 'sending');
     item.timer = setTimeout(() => {
-      this.setPendingState(item, 'failed', 'Not delivered. The connection may have dropped.');
+      // No acknowledgement yet. Re-sending with the same id is safe: the server
+      // recognises it and never posts a message twice.
+      if (this.connected && item.tries < AUTO_RETRIES) {
+        item.tries++;
+        this.transmit(item, { manual: false });
+      } else if (!this.connected) {
+        this.setPendingState(item, 'queued');
+      } else {
+        this.setPendingState(item, 'failed', 'Not delivered: the exchange did not confirm it.');
+      }
     }, ACK_TIMEOUT_MS);
   }
 
@@ -203,9 +238,9 @@ export class ChatPanel {
     el.classList.toggle('is-failed', status === 'failed');
     el.querySelector('.msg-state')?.remove();
     if (status === 'sending') {
-      el.append(h('div', { class: 'msg-state' }, 'Sending…'));
+      el.append(h('div', { class: 'msg-state' }, item.tries ? 'Sending again…' : 'Sending…'));
     } else if (status === 'queued') {
-      el.append(h('div', { class: 'msg-state' }, 'Waiting for the connection. It will send when you are back online.'));
+      el.append(h('div', { class: 'msg-state' }, 'Waiting for the line. It sends as soon as you are reconnected.'));
     } else if (status === 'failed') {
       el.append(
         h(
@@ -223,6 +258,7 @@ export class ChatPanel {
     clearTimeout(item.timer);
     item.el.remove();
     this.pending.delete(item.clientId);
+    this.persist();
     this.renderEmpty();
   }
 
@@ -233,6 +269,7 @@ export class ChatPanel {
       const item = this.pending.get(message.clientId);
       clearTimeout(item.timer);
       this.pending.delete(message.clientId);
+      this.persist();
       const el = this.renderMessage(message, true);
       item.el.replaceWith(el);
       this.seen.add(message.id);
@@ -262,6 +299,8 @@ export class ChatPanel {
     if (!item) return;
     clearTimeout(item.timer);
     if (!retryable) {
+      item.rejected = true; // stays on screen with Delete, but is not kept for a reload
+      this.persist();
       this.setPendingState(item, 'failed', reason);
       return;
     }

@@ -15,6 +15,7 @@ const BELL_NOTES = [69, 72, 74, 76, 79, 81];
 const MOODS = {
   menu: { filter: 380, pad: 0.05, bells: [7, 14], clanks: [22, 45] },
   lobby: { filter: 420, pad: 0.05, bells: [6, 12], clanks: [20, 40] },
+  result: { filter: 760, pad: 0.05, bells: [3, 7], clanks: [60, 90] },
   game: { filter: 520, pad: 0.055, bells: [5, 11], clanks: [14, 30] },
   won: { filter: 900, pad: 0.06, bells: [2.5, 5], clanks: [999, 999] },
   lost: { filter: 240, pad: 0.04, bells: [12, 20], clanks: [8, 16] },
@@ -402,6 +403,33 @@ export class AudioEngine {
       case 'drop':
         this.tone({ freq: 523, dur: 0.25, gain: 0.04 });
         this.tone({ freq: 349, dur: 0.4, gain: 0.04, at: 0.15 });
+        break;
+      case 'cadence': {
+        // A party-line ring: long and short bursts of the 400/450 Hz ringing tone.
+        let at = 0;
+        for (const part of opt.pattern || '') {
+          const dur = part === 'L' ? 0.55 : 0.2;
+          this.tone({ freq: 400, dur, gain: 0.045, at, attack: 0.01 });
+          this.tone({ freq: 450, dur, gain: 0.045, at, attack: 0.01 });
+          at += dur + 0.18;
+        }
+        break;
+      }
+      case 'toggle':
+        this.burst({ dur: 0.04, gain: 0.22, type: 'lowpass', freq: 1200 });
+        this.tone({ freq: opt.up ? 180 : 120, glideTo: opt.up ? 220 : 90, dur: 0.08, gain: 0.08, type: 'triangle' });
+        break;
+      case 'page':
+        this.burst({ dur: 0.12, gain: 0.05, freq: 2400, sweepTo: 900, q: 0.7 });
+        break;
+      case 'star': {
+        const notes = [76, 79, 83];
+        this.bell({ freq: midi(notes[Math.min(2, opt.index || 0)]), gain: 0.08, dur: 2.2, bus: 'sfx', verb: 0.5 });
+        break;
+      }
+      case 'stage':
+        [64, 69, 73, 76].forEach((n, i) => this.bell({ freq: midi(n), at: i * 0.11, gain: 0.06, dur: 2.4, bus: 'sfx', verb: 0.6 }));
+        [45, 52, 57].forEach((n) => this.tone({ freq: midi(n), type: 'triangle', dur: 2.6, gain: 0.035, attack: 0.4, at: 0.3, verb: 0.8 }));
         break;
       case 'win':
         this.play('success');
