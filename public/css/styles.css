@@ -2005,25 +2005,6 @@ body:has(#screen-connect:not([hidden])) .skip-link {
     radial-gradient(60% 45% at 50% 34%, rgba(242, 168, 59, 0.1), transparent 70%),
     var(--bakelite);
 }
-.story-lamp {
-  width: 1.7rem;
-  height: 1.7rem;
-  border-radius: 50%;
-  border: 3px solid #5a4630;
-  --glow: var(--lamp);
-  --glow-soft: var(--lamp-glow);
-  background: var(--glow);
-  box-shadow: 0 0 36px 8px var(--glow-soft);
-  transition: background-color 0.6s ease, box-shadow 0.6s ease;
-}
-.story-lamp[data-color='violet'] {
-  --glow: #b9acf2;
-  --glow-soft: rgba(185, 172, 242, 0.45);
-}
-.story-lamp[data-color='green'] {
-  --glow: #6fc58c;
-  --glow-soft: rgba(111, 197, 140, 0.45);
-}
 .story-page {
   max-width: 36rem;
   min-height: 12rem;
@@ -2098,6 +2079,338 @@ body:has(#screen-connect:not([hidden])) .skip-link {
   position: absolute;
   top: max(1rem, env(safe-area-inset-top));
   right: max(1rem, env(safe-area-inset-right));
+}
+
+/* ---- The opening's scenes ------------------------------------------------------
+   Small inline SVG pictures, animated by CSS. Each scene plays once as its page
+   turns; under reduced motion every animation collapses to its final frame
+   (the global rule at the end of this file), so each page is a still picture. */
+.story-scene {
+  width: min(22rem, 78vw);
+  margin: 0 auto;
+}
+.story-scene.is-turning {
+  animation: page-in 0.5s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+}
+.story-scene[data-dir='back'].is-turning {
+  animation-name: page-in-back;
+}
+.scene {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  --ink-line: #c9a25a;
+  --ink-soft: rgba(201, 162, 90, 0.35);
+}
+.scene text {
+  font-family: var(--font-manual);
+  fill: var(--ink-line);
+}
+@keyframes scene-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes lamp-wake {
+  0%,
+  35% {
+    fill: #3e302a;
+    filter: none;
+  }
+  45%,
+  100% {
+    fill: var(--lamp);
+    filter: drop-shadow(0 0 8px var(--lamp));
+  }
+}
+@keyframes ring-out {
+  from {
+    transform: scale(0.4);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(1.3);
+    opacity: 0;
+  }
+}
+@keyframes draw {
+  from {
+    stroke-dashoffset: var(--len, 600);
+  }
+}
+@keyframes travel {
+  from {
+    offset-distance: 0%;
+    opacity: 0;
+  }
+  10%,
+  90% {
+    opacity: 1;
+  }
+  to {
+    offset-distance: 100%;
+    opacity: 0;
+  }
+}
+@keyframes stamp-in {
+  from {
+    transform: translate(226px, 136px) rotate(-12deg) scale(2.2);
+    opacity: 0;
+  }
+  70% {
+    transform: translate(226px, 136px) rotate(-12deg) scale(0.92);
+    opacity: 1;
+  }
+}
+@keyframes pop {
+  from {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+}
+
+/* 1. The archive card. */
+.scene-archive .card {
+  fill: #e8e2cf;
+  stroke: #b9ad8f;
+  stroke-width: 1.5;
+  animation: scene-fade 0.6s ease both;
+}
+.scene-archive .rule {
+  stroke: #b9ad8f;
+  stroke-width: 1;
+}
+.scene-archive .hole {
+  fill: #1c1411;
+}
+.scene-archive text {
+  fill: #4a3d8f;
+}
+.scene-archive .card-head {
+  font-size: 13px;
+  letter-spacing: 0.2em;
+  font-weight: 700;
+}
+.scene-archive .card-year {
+  font-family: var(--font-display);
+  font-size: 30px;
+  letter-spacing: 0.04em;
+}
+.scene-archive .card-foot {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+}
+.scene-archive .stamp {
+  animation: stamp-in 0.6s cubic-bezier(0.2, 1.2, 0.3, 1) 0.7s both;
+  transform-box: fill-box;
+}
+.scene-archive .stamp rect {
+  fill: none;
+  stroke: #b8362b;
+  stroke-width: 2.5;
+}
+.scene-archive .stamp text {
+  fill: #b8362b;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+/* 2. One lamp wakes on a dark board. */
+.scene-ring .board {
+  fill: #241a15;
+  stroke: #4a3828;
+  stroke-width: 2;
+}
+.scene-ring .lamp {
+  fill: #3e302a;
+}
+.scene-ring .lamp.is-live {
+  animation: lamp-wake 2.4s steps(1, end) 0.4s both;
+}
+.scene-ring .ring-waves circle {
+  fill: none;
+  stroke: var(--lamp);
+  stroke-width: 1.5;
+  transform-box: fill-box;
+  transform-origin: center;
+  opacity: 0;
+  animation: ring-out 1.6s ease-out 1.5s infinite;
+}
+.scene-ring .ring-waves circle:nth-child(2) {
+  animation-delay: 1.9s;
+}
+.scene-ring .ring-waves circle:nth-child(3) {
+  animation-delay: 2.3s;
+}
+.scene-ring .board-tag {
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  animation: scene-fade 0.8s ease 1.6s both;
+}
+
+/* 3. The Caller's panel: machines appear, the query mark lingers. */
+.scene-caller .panel {
+  fill: #241a15;
+  stroke: #4a3828;
+  stroke-width: 2;
+}
+.scene-caller .dial-face {
+  fill: #0d0907;
+  stroke: var(--ink-line);
+  stroke-width: 2;
+}
+.scene-caller .dial-plate {
+  fill: #2e221c;
+}
+.scene-caller .dial-hole {
+  fill: #efe6d6;
+}
+.scene-caller .dial {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pop 0.5s cubic-bezier(0.2, 1.2, 0.3, 1) 0.2s both;
+}
+.scene-caller .plate {
+  fill: #243631;
+  stroke: var(--ink-line);
+  stroke-width: 1.5;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pop 0.45s cubic-bezier(0.2, 1.2, 0.3, 1) both;
+  animation-delay: calc(0.5s + var(--i) * 0.18s);
+}
+.scene-caller .glyphs path,
+.scene-caller .glyphs circle {
+  fill: none;
+  stroke: #f0e2bf;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  animation: scene-fade 0.4s ease 1.1s both;
+}
+.scene-caller .lever rect,
+.scene-caller .lever circle {
+  fill: #6d5230;
+}
+.scene-caller .query {
+  font-family: var(--font-display);
+  font-size: 28px;
+  fill: var(--lamp);
+  animation: scene-fade 0.6s ease 1.6s both;
+}
+
+/* 4. The Operator's manual: lines of ink, a figure, a page turning. */
+.scene-operator .manual {
+  fill: #dfe2d3;
+  stroke: #c9cdb9;
+  stroke-width: 1.5;
+}
+.scene-operator .spine {
+  stroke: #c9cdb9;
+  stroke-width: 1.5;
+}
+.scene-operator .ink {
+  stroke: #4a3d8f;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-dasharray: 60;
+  --len: 60;
+  animation: draw 0.5s ease both;
+  animation-delay: calc(0.3s + var(--i) * 0.16s);
+}
+.scene-operator .manual-figure path,
+.scene-operator .manual-figure circle {
+  fill: none;
+  stroke: #4a3d8f;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.scene-operator .manual-figure text {
+  fill: #4a3d8f;
+  font-size: 12px;
+}
+.scene-operator .manual-figure {
+  animation: scene-fade 0.6s ease 1.2s both;
+}
+.scene-operator .page-turn {
+  fill: none;
+  stroke: #b9ad8f;
+  stroke-width: 1;
+  stroke-dasharray: 230;
+  --len: 230;
+  animation: draw 1s ease-in-out 1.5s both;
+}
+.scene-operator .manual-tag {
+  font-size: 9px;
+  letter-spacing: 0.22em;
+}
+
+/* 5. Two headsets, words travelling the cord between them. */
+.scene-talk .headset path {
+  fill: none;
+  stroke: var(--ink-line);
+  stroke-width: 3;
+}
+.scene-talk .headset rect {
+  fill: #2e221c;
+  stroke: var(--ink-line);
+  stroke-width: 2;
+}
+.scene-talk .cord {
+  fill: none;
+  stroke: var(--lamp);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-dasharray: 240;
+  --len: 240;
+  animation: draw 1s ease-out 0.3s both;
+}
+.scene-talk .word {
+  fill: #fff2c9;
+  filter: drop-shadow(0 0 4px var(--lamp));
+  opacity: 0;
+  animation: scene-fade 0.5s ease both;
+  animation-delay: calc(1.2s + var(--i) * 0.35s);
+  animation-fill-mode: forwards;
+}
+.scene-talk .talk-tag {
+  font-size: 9px;
+  letter-spacing: 0.25em;
+}
+
+/* 6. Two hundred lines: jacks lighting along a route, the last lamp waiting. */
+.scene-lines .frame {
+  fill: #241a15;
+  stroke: #4a3828;
+  stroke-width: 2;
+}
+.scene-lines .jack {
+  fill: #3e302a;
+  animation: lamp-wake 0.3s steps(1, end) both;
+  animation-delay: calc(0.3s + var(--i) * 0.045s);
+}
+.scene-lines .route {
+  fill: none;
+  stroke: var(--lamp);
+  stroke-width: 2;
+  stroke-linecap: round;
+  opacity: 0.55;
+  stroke-dasharray: 1000;
+  --len: 1000;
+  animation: draw 2.2s linear 0.3s both;
+}
+.scene-lines .last-lamp {
+  fill: #fff2c9;
+  filter: drop-shadow(0 0 10px var(--lamp));
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pop 0.6s cubic-bezier(0.2, 1.4, 0.4, 1) 2.5s both;
+}
+.scene-lines .lines-tag {
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  animation: scene-fade 0.8s ease 2.6s both;
 }
 
 /* ---- Wordmark and menu ------------------------------------------------------- */
@@ -2292,16 +2605,20 @@ body:has(#screen-connect:not([hidden])) .skip-link {
 .game > * {
   min-width: 0;
 }
+/* ---- The chapter rack: ten line keys ---------------------------------------- */
 .chapter-keys {
   list-style: none;
   margin: 0;
-  padding: 0.2rem 0.1rem 0.5rem;
+  /* Room above, so the rack never sits under the sticky top bar when the map is scrolled to. */
+  padding: 0.6rem 0.1rem 0.5rem;
+  scroll-margin-top: calc(var(--topbar-h) + 0.5rem);
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(9rem, 1fr);
-  gap: 0.55rem;
+  grid-auto-columns: minmax(10.5rem, 1fr);
+  gap: 0.5rem;
   overflow-x: auto;
   scroll-snap-type: x proximity;
+  scrollbar-width: thin;
 }
 .chapter-keys li {
   scroll-snap-align: start;
@@ -2310,13 +2627,13 @@ body:has(#screen-connect:not([hidden])) .skip-link {
   width: 100%;
   height: 100%;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto auto minmax(0, 1fr);
   grid-template-rows: auto auto;
-  column-gap: 0.6rem;
+  column-gap: 0.5rem;
   align-items: center;
   text-align: left;
-  padding: 0.55rem 0.7rem 0.6rem;
-  border-radius: 12px;
+  padding: 0.5rem 0.65rem 0.55rem;
+  border-radius: 10px;
   border: 1.5px solid var(--brass-faint);
   background: linear-gradient(180deg, #2b201b, #1e1613);
   color: var(--ink);
@@ -2325,27 +2642,45 @@ body:has(#screen-connect:not([hidden])) .skip-link {
 .chapter-key:hover {
   border-color: var(--brass-dim);
 }
+.key-lamp {
+  grid-row: span 2;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  background: #3e302a;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.key-lamp.is-warm {
+  background: #8a5a22;
+}
+.key-lamp.is-lit {
+  background: var(--lamp);
+  box-shadow: 0 0 10px var(--lamp-glow);
+}
 .key-num {
   grid-row: span 2;
-  width: 2.1rem;
-  height: 2.1rem;
+  width: 2rem;
+  height: 2rem;
   border-radius: 50%;
   display: grid;
   place-items: center;
   font-family: var(--font-display);
-  font-size: 1.15rem;
+  font-size: 1.1rem;
   background: #3a2b22;
   color: var(--brass);
   box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.35);
 }
 .key-title {
-  font-weight: 700;
-  font-size: 0.88rem;
-  line-height: 1.15;
+  font-weight: 600;
+  font-size: var(--step--1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.key-stars {
+.key-meter {
   font-size: 0.78rem;
   color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
 }
 .chapter-key.is-current {
   border-color: var(--lamp);
@@ -2354,19 +2689,19 @@ body:has(#screen-connect:not([hidden])) .skip-link {
 .chapter-key.is-current .key-num {
   background: var(--lamp);
   color: var(--bakelite);
-  box-shadow: 0 0 14px var(--lamp-glow);
 }
 .chapter-key.is-locked {
   opacity: 0.55;
 }
 
+/* ---- The frame: one chapter's route ------------------------------------------ */
 .map-body {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(17rem, 1fr);
   gap: 1.25rem;
   align-items: start;
 }
-.board {
+.frame {
   padding: clamp(1rem, 2.5vw, 1.6rem);
   border-radius: 18px;
   background:
@@ -2378,51 +2713,242 @@ body:has(#screen-connect:not([hidden])) .skip-link {
     inset 0 0 0 7px rgba(201, 162, 90, 0.3),
     0 20px 40px rgba(0, 0, 0, 0.4);
 }
-.board-head h2 {
+.frame-ref {
+  margin: 0 0 0.2rem;
+  font-family: var(--font-manual);
+  font-size: var(--step--1);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--brass);
+}
+.frame-head h2 {
   font-family: var(--font-display);
   font-size: var(--step-3);
-  color: var(--ink);
-  margin-bottom: 0.35rem;
+  margin: 0 0 0.3rem;
 }
-.board-intro {
+.frame-intro {
   color: var(--ink-dim);
-  max-width: 42rem;
+  margin: 0 0 0.8rem;
 }
-.board-count {
+.frame-progress {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+.frame-meter {
+  height: 0.55rem;
+  border-radius: 999px;
+  background: #16100d;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.7);
+  overflow: hidden;
+}
+.frame-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--brass), var(--lamp));
+  box-shadow: 0 0 10px var(--lamp-glow);
+  transition: width 0.6s ease;
+}
+.frame-count {
   margin: 0;
   font-size: var(--step--1);
   color: var(--brass);
   font-weight: 600;
 }
-.jacks {
+.frame-next {
+  margin: 0 0 0.3rem;
+  font-size: var(--step--1);
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.frame-next.is-done {
+  color: var(--verdigris);
+}
+
+/* The route picture. Jack states mirror the list's buttons. */
+.route-wrap {
+  margin: 0.4rem 0 0.6rem;
+  padding: 0.5rem 0.25rem;
+  border-radius: 12px;
+  background:
+    repeating-linear-gradient(90deg, rgba(201, 162, 90, 0.05) 0 1px, transparent 1px 25%),
+    radial-gradient(80% 60% at 50% 100%, rgba(242, 168, 59, 0.07), transparent 70%),
+    #1a120f;
+  box-shadow: inset 0 0 0 1px rgba(201, 162, 90, 0.18);
+}
+.route {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.route-guide {
+  fill: none;
+  stroke: #4a3828;
+  stroke-width: 3;
+  stroke-dasharray: 2 7;
+  stroke-linecap: round;
+}
+.route-lit {
+  fill: none;
+  stroke: var(--lamp);
+  stroke-width: 4;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 4px var(--lamp-glow));
+}
+.route.is-advancing .route-lit {
+  animation: route-advance 1.1s ease-out 0.2s both;
+}
+@keyframes route-advance {
+  from {
+    stroke-dashoffset: var(--route-from);
+  }
+}
+.route-signal {
+  fill: #fff2c9;
+  filter: drop-shadow(0 0 6px var(--lamp));
+  opacity: 0.9;
+}
+.route-jack {
+  cursor: pointer;
+}
+.jack-well {
+  fill: #0d0907;
+  stroke: #6d5230;
+  stroke-width: 3;
+}
+.jack-lamp {
+  fill: #2a1f19;
+  transition: fill 0.4s ease;
+}
+.jack-label {
+  font-family: var(--font-display);
+  font-size: 13px;
+  fill: var(--ink-dim);
+  pointer-events: none;
+}
+.route-jack.is-done .jack-lamp {
+  fill: var(--lamp);
+  filter: drop-shadow(0 0 6px var(--lamp-glow));
+}
+.route-jack.is-done .jack-label {
+  fill: var(--bakelite);
+}
+.route-jack.is-next .jack-lamp {
+  fill: #ffd27a;
+  animation: jack-breathe 2.6s ease-in-out infinite;
+}
+.route-jack.is-next .jack-well {
+  stroke: var(--lamp);
+}
+.route-jack.is-next .jack-label {
+  fill: var(--bakelite);
+}
+@keyframes jack-breathe {
+  50% {
+    filter: drop-shadow(0 0 12px var(--lamp));
+  }
+}
+.route-jack.is-locked .jack-well {
+  stroke: #3a2c22;
+}
+.route-jack.is-locked .jack-label {
+  fill: #5c4a3c;
+}
+.jack-finale-ring {
+  fill: none;
+  stroke: var(--brass-dim);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 4;
+}
+.route-jack.is-selected .jack-well {
+  stroke: var(--ink);
+  stroke-width: 3.5;
+}
+.route-jack.is-unlocking .jack-lamp {
+  animation: jack-unlock 0.9s cubic-bezier(0.2, 1.4, 0.4, 1) 1s both;
+}
+@keyframes jack-unlock {
+  from {
+    transform: scale(0.4);
+    transform-origin: center;
+    fill: #2a1f19;
+  }
+  60% {
+    transform: scale(1.25);
+    transform-origin: center;
+  }
+}
+.jack-star {
+  fill: #3e302a;
+}
+.jack-star.on {
+  fill: var(--lamp);
+}
+.jack-tag-text {
+  font-family: var(--font-ui);
+  font-size: 9.5px;
+  font-weight: 600;
+  fill: var(--ink-dim);
+  paint-order: stroke fill;
+  stroke: #1a120f;
+  stroke-width: 3;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.route-jack.is-done .jack-tag-text,
+.route-jack.is-next .jack-tag-text {
+  fill: var(--ink);
+}
+.route-jack.is-locked .jack-tag-text {
+  fill: #6a5747;
+}
+
+/* The same stages as a list: what keyboards and screen readers use. */
+.stage-list-wrap {
+  margin-top: 0.3rem;
+}
+.stage-list-wrap summary {
+  cursor: pointer;
+  color: var(--ink-dim);
+  font-size: var(--step--1);
+  font-weight: 600;
+  padding: 0.3rem 0;
+}
+.stage-list {
   list-style: none;
   padding: 0;
-  margin: 1.1rem 0 0;
+  margin: 0.5rem 0 0;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: clamp(0.35rem, 1.6vw, 0.85rem);
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 0.4rem;
 }
 .jack {
   width: 100%;
   display: grid;
-  justify-items: center;
-  gap: 0.35rem;
-  padding: 0.55rem 0.2rem 0.5rem;
-  border-radius: 14px;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.35rem 0.5rem 0.35rem 0.35rem;
+  border-radius: 10px;
   border: 1.5px solid transparent;
   background: rgba(0, 0, 0, 0.2);
   color: var(--ink);
   cursor: pointer;
+  text-align: left;
 }
 .jack:hover {
   border-color: var(--brass-dim);
 }
 .jack.is-selected {
-  border-color: var(--brass);
-  background: rgba(201, 162, 90, 0.1);
+  border-color: var(--lamp);
+  background: rgba(242, 168, 59, 0.08);
 }
 .jack-socket {
-  width: clamp(2.5rem, 7vw, 3.3rem);
+  width: 2.1rem;
   aspect-ratio: 1;
   border-radius: 50%;
   display: grid;
@@ -2432,54 +2958,47 @@ body:has(#screen-connect:not([hidden])) .skip-link {
 }
 .jack-num {
   font-family: var(--font-display);
-  font-size: 1.05rem;
+  font-size: 0.95rem;
   color: var(--ink-dim);
 }
 .jack.is-done .jack-socket {
   background: radial-gradient(circle at 40% 35%, #fff2c9, var(--lamp) 45%, #c26a17 100%);
-  box-shadow: 0 0 16px var(--lamp-glow), inset 0 -3px 6px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 0 10px var(--lamp-glow), inset 0 -3px 6px rgba(0, 0, 0, 0.25);
 }
 .jack.is-done .jack-num {
   color: var(--bakelite);
 }
 .jack.is-next .jack-socket {
-  box-shadow: 0 0 0 3px var(--lamp), 0 0 18px var(--lamp-glow);
-  animation: next-pulse 2.6s ease-in-out infinite;
+  box-shadow: 0 0 0 2px var(--lamp), 0 0 14px var(--lamp-glow);
 }
 .jack.is-next .jack-num {
   color: var(--lamp);
 }
-@keyframes next-pulse {
-  50% {
-    box-shadow: 0 0 0 3px var(--lamp), 0 0 4px transparent;
-  }
-}
 .jack.is-locked {
-  opacity: 0.5;
+  opacity: 0.6;
 }
 .jack.is-locked .jack-socket {
   background: radial-gradient(circle, #0d0907 38%, #3a2c22 41%, #221a15 100%);
 }
-.jack.is-finale .jack-socket {
-  outline: 2px dashed var(--brass-dim);
-  outline-offset: 3px;
+.jack-name {
+  display: grid;
+  min-width: 0;
 }
-.jack-stars,
-.sp-level {
-  display: flex;
-  gap: 0.18rem;
+.jack-title {
+  font-size: var(--step--1);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.jack-stars i {
-  width: 0.62rem;
-  height: 0.62rem;
-  background: #4a3a2e;
-  clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+.jack-state {
+  font-size: 0.78rem;
+  color: var(--ink-dim);
+  letter-spacing: 0.06em;
 }
-.jack-stars i.on {
-  background: var(--lamp);
+.jack.is-done .jack-state {
+  color: var(--lamp);
 }
-
-/* The selected stage, as a paper booking ticket. */
 .stage-card {
   position: sticky;
   top: calc(var(--topbar-h) + 1rem);
@@ -3828,10 +4347,6 @@ body:has(#screen-connect:not([hidden])) .skip-link {
   }
   .stage-indicator-ref {
     font-size: var(--step-0);
-  }
-  .jack-stars i {
-    width: 0.5rem;
-    height: 0.5rem;
   }
   .cadence-directory li {
     grid-template-columns: minmax(0, 1fr) auto;

@@ -92,6 +92,7 @@ class Browser {
     const { targetId } = await this.send('Target.createTarget', { url: 'about:blank', browserContextId });
     const { sessionId } = await this.send('Target.attachToTarget', { targetId, flatten: true });
     const page = new Page(this, sessionId);
+    page.targetId = targetId;
     await page.send('Page.enable');
     await page.send('Runtime.enable');
     page.errors = [];
@@ -128,6 +129,10 @@ class Page {
 
   send(method, params) {
     return this.browser.send(method, params, this.sessionId);
+  }
+
+  close() {
+    return this.browser.send('Target.closeTarget', { targetId: this.targetId });
   }
 
   /** Runs `fn(...args)` in the page and returns its (JSON) result. */

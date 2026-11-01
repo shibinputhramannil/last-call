@@ -111,7 +111,7 @@ The brass knob in the bottom-left corner opens **Settings** (on phones in a room
 
 Settings are kept in your browser.
 
-**Keyboard.** Everything works without a mouse. On the rotary dial you can type digits, use Backspace to remove one, and press Enter to connect. On the stage map, arrow keys move between stages. In chat, Enter sends and Shift+Enter adds a new line.
+**Keyboard.** Everything works without a mouse. On the rotary dial you can type digits, use Backspace to remove one, and press Enter to connect. On the stage map, the route is a picture; the list under it ("All stages in this chapter") is the same stages as buttons, where arrow keys move between stages and Home and End jump to the first and last. In chat, Enter sends and Shift+Enter adds a new line.
 
 ### If the connection drops
 
@@ -496,7 +496,7 @@ public/             Browser client (plain HTML, CSS and ES modules, no build ste
   js/chat.js        Chat panel: receipts, automatic re-sends, queued and saved messages
   js/story.js       The opening story
   js/music.js       The original background score, composed as it plays
-  js/map.js         The stage map
+  js/map.js         The stage map: a cable route through each chapter, with a list of the same stages
   js/result.js      Stage results, scores and stars
   js/caller.js      The Caller's machines
   js/manual.js      The Operator's field manual
