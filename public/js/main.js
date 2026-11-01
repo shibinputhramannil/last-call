@@ -386,7 +386,35 @@ function setRoomUrl(code) {
   history.replaceState(null, '', url);
 }
 
-const inviteLink = () => `${location.origin}/?room=${app.code}`;
+/**
+ * The game's public address, as the server put it in the page (PUBLIC_URL, or
+ * Render's own address). A link built from it works for whoever receives it,
+ * which the address this page is open on (a developer's localhost, a LAN
+ * address) does not.
+ */
+function publicOrigin() {
+  const served = document.querySelector('meta[name="lastcall:origin"]')?.content;
+  return /^https?:\/\//.test(served || '') ? served.replace(/\/$/, '') : location.origin;
+}
+/** The game itself, for telling a friend about it. */
+const gameLink = () => `${publicOrigin()}/`;
+/** This room, for bringing a partner into it. */
+const inviteLink = () => `${publicOrigin()}/?room=${app.code}`;
+
+/** Shares a link with the device's share sheet, or copies it. Says what happened either way. */
+async function shareLink({ title, text, url, copied }) {
+  if (typeof navigator.share === 'function') {
+    try {
+      await navigator.share({ title, text, url });
+      return;
+    } catch (err) {
+      if (err?.name === 'AbortError') return; // the player closed the share sheet
+      // Sharing refused (not allowed here, or no app to share to): fall back to copying.
+    }
+  }
+  const ok = await copyText(url);
+  toast(ok ? copied : `Copy failed. The link is ${url}`, ok ? 'good' : 'error');
+}
 
 function enterRoom(code, token) {
   leaveConnection();
@@ -1062,13 +1090,14 @@ function setupRoomControls() {
     const ok = await copyText(formatRoomCode(app.code));
     toast(ok ? 'Room code copied.' : 'Copy failed. Read the code out instead.', ok ? 'good' : 'error');
   });
-  $('#share-link').addEventListener('click', async () => {
-    try {
-      await navigator.share({ title: 'Last Call', text: 'I’m on the line in Last Call and need a partner. Join my room:', url: inviteLink() });
-    } catch {
-      // cancelled
-    }
-  });
+  $('#share-link').addEventListener('click', () =>
+    shareLink({
+      title: 'Last Call',
+      text: 'I’m on the line in Last Call and need a partner. Join my room:',
+      url: inviteLink(),
+      copied: 'Invite link copied. Send it to your partner.',
+    }),
+  );
   $('#swap-roles').addEventListener('click', () => app.conn?.send({ t: 'swap' }));
   for (const radio of $$('[name="lobby-mode"]')) {
     radio.addEventListener('change', () => app.conn?.send({ t: 'mode', mode: radio.value }));
@@ -1103,7 +1132,17 @@ function setupRoomControls() {
 // ---- Boot -------------------------------------------------------------------------
 
 function boot() {
-  setupSettings({ audio, onReplayOpening: () => startOpening(returnFromOpening) });
+  setupSettings({
+    audio,
+    onReplayOpening: () => startOpening(returnFromOpening),
+    onShare: () =>
+      shareLink({
+        title: 'Last Call',
+        text: 'A puzzle game for two: one of you is trapped in a forgotten telephone exchange, the other holds the manual. Play free in the browser:',
+        url: gameLink(),
+        copied: 'Link to Last Call copied. Send it to a friend.',
+      }),
+  });
   setupMenu();
   setupRoomControls();
   setInterval(tickTimer, 250);

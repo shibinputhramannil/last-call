@@ -107,13 +107,43 @@ test('the page carries absolute share-preview tags in its first response, for th
   assert.equal(poster.headers.get('content-type'), 'image/jpeg');
   assert.ok(Number(poster.headers.get('content-length')) < 300_000, 'small enough for WhatsApp');
 
+  // WhatsApp shows the description under the poster only if it is short.
+  assert.ok(meta(page, 'og:description').length <= 160, `description is ${meta(page, 'og:description').length} characters`);
+  assert.equal(meta(page, 'description'), meta(page, 'og:description'));
+  // The page tells browsers its public address, so share links never use a developer's localhost.
+  const canonical = (html) => html.match(/<link rel="canonical" href="([^"]*)"/)?.[1];
+  assert.equal(canonical(page), `${base}/`);
+  assert.equal(meta(page, 'lastcall:origin'), base);
+
   const invite = await (await fetch(base + '/?room=k7q-m3x')).text();
   assert.equal(meta(invite, 'og:url'), `${base}/?room=K7QM3X`);
+  assert.equal(canonical(invite), `${base}/?room=K7QM3X`);
   assert.match(meta(invite, 'og:title'), /K7Q-M3X/);
   assert.equal(meta(invite, 'og:image'), meta(page, 'og:image'), 'invites share the game poster');
   const junk = await (await fetch(base + '/?room=%22%3E%3Cscript%3E')).text();
   assert.ok(!junk.includes('"><script>'), 'query strings are never echoed raw');
   assert.equal(meta(junk, 'og:url'), `${base}/`);
+});
+
+test('with a public address configured, every share tag and the poster use it, whatever host the request came in on', async () => {
+  const own = createApp({ ...config, publicUrl: 'https://last-call.example.com' }, { log: silentLogger });
+  await new Promise((resolve) => own.server.listen(0, '127.0.0.1', resolve));
+  const ownBase = `http://127.0.0.1:${own.server.address().port}`;
+  try {
+    const meta = (html, prop) => html.match(new RegExp(`<meta (?:property|name)="${prop}" content="([^"]*)"`))?.[1];
+    const page = await (await fetch(ownBase + '/', { headers: { host: 'localhost:3000' } })).text();
+    assert.equal(meta(page, 'og:url'), 'https://last-call.example.com/');
+    assert.equal(meta(page, 'og:image'), 'https://last-call.example.com/og/last-call-poster-v1.jpg');
+    assert.equal(meta(page, 'twitter:image'), 'https://last-call.example.com/og/last-call-poster-v1.jpg');
+    assert.equal(meta(page, 'lastcall:origin'), 'https://last-call.example.com');
+    assert.match(page, /<link rel="canonical" href="https:\/\/last-call\.example\.com\/"/);
+    const hrefs = [...page.matchAll(/(?:content|href)="(https?:\/\/[^"]*)"/g)].map((m) => m[1]);
+    assert.ok(hrefs.length >= 5 && hrefs.every((u) => !/localhost|127\.0\.0\.1/.test(u)), `the request host never leaks into a tag: ${hrefs.join(' ')}`);
+    const invite = await (await fetch(ownBase + '/?room=K7QM3X')).text();
+    assert.equal(meta(invite, 'og:url'), 'https://last-call.example.com/?room=K7QM3X');
+  } finally {
+    await own.close();
+  }
 });
 
 test('an invite shows a loading screen in the first response, before any script runs', async () => {

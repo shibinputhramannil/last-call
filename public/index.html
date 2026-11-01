@@ -9,6 +9,10 @@
     <meta name="robots" content="noindex" />
     <meta name="google-site-verification" content="{{SITE_VERIFICATION}}" />
     <!-- Share previews (WhatsApp, iMessage, Slack, social). The server fills in absolute URLs. -->
+    <!-- The game's public address. Share links are built from this, never from
+         the address the page happens to be open on (a developer's localhost). -->
+    <link rel="canonical" href="{{SHARE_URL}}" />
+    <meta name="lastcall:origin" content="{{ORIGIN}}" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Last Call" />
     <meta property="og:title" content="{{SHARE_TITLE}}" />
@@ -401,6 +405,11 @@
         <fieldset class="settings-group">
           <legend>Story</legend>
           <button class="btn" id="set-replay" type="button">Replay the opening story</button>
+        </fieldset>
+        <fieldset class="settings-group">
+          <legend>Tell a friend</legend>
+          <button class="btn" id="set-share" type="button">Share Last Call</button>
+          <p class="settings-note">Shares the game’s own link. To bring someone into your room, use the invite link in the lobby.</p>
         </fieldset>
       </div>
     </section>

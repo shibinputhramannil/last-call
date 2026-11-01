@@ -41,8 +41,8 @@ const RESTARTING = {
 
 const SHARE = {
   title: 'Last Call: a two-player telephone mystery',
-  description:
-    'One of you is trapped in an abandoned telephone exchange. The other holds the manual. Talk it through to restore 200 lines and connect the last call.',
+  // Short enough that WhatsApp shows all of it under the poster.
+  description: 'A co-op puzzle game for two. One of you is trapped in a forgotten telephone exchange; the other holds the manual. Talk it through, free in the browser.',
   inviteTitle: (code) => `Join my call on Last Call (room ${formatRoomCode(code)})`,
   inviteDescription:
     'I’m on the line and need a partner. One of us sees the machines, the other holds the manual: talk it through to solve the exchange together.',

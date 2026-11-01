@@ -108,6 +108,7 @@ The brass knob in the bottom-left corner opens **Settings** (on phones in a room
 - **Motion:** match your device, reduce motion, or full motion.
 - **Reading:** standard, large or larger text; higher contrast; and the typewriter font in the manual (turn it off for a plainer font).
 - **Story:** replay the opening.
+- **Tell a friend:** shares the game's own public link (with your device's share sheet, or by copying it). To bring someone into your room, use the invite link in the lobby instead.
 
 Settings are kept in your browser.
 
@@ -382,6 +383,7 @@ Sending the game's address, or a room invite link (`…/?room=K7QM3X`), in Whats
 - The preview tags (`og:title`, `og:description`, `og:image` and its size and alt text, `og:url`, and Twitter card tags) are in the page's first HTML response, filled in by the server. Link-preview crawlers don't run JavaScript, so nothing depends on it.
 - The poster is [`public/og/last-call-poster-v1.jpg`](public/og/last-call-poster-v1.jpg): 1200 × 630 JPEG, about 80 KB (WhatsApp tends to drop images over about 300 KB). Its address is absolute, built from `PUBLIC_URL`, or Render's `RENDER_EXTERNAL_URL`, or the request's own host.
 - Invite links share the same poster and say which room you're invited to; opening one still opens that room's join screen.
+- The page also carries a `<link rel="canonical">` and a `lastcall:origin` meta tag with the same public address. The game's own share and copy buttons build their links from that, never from the address the page happens to be open on, so a game run on your own computer (`localhost`) still shares a link a friend can open.
 
 **Check a preview** from a terminal (replace the address):
 

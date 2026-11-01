@@ -17,7 +17,7 @@ export function applyPrefs(prefs) {
   root.dataset.manualFont = prefs.manualFont === 'plain' ? 'plain' : 'typewriter';
 }
 
-export function setupSettings({ audio, onReplayOpening }) {
+export function setupSettings({ audio, onReplayOpening, onShare }) {
   let prefs = loadPrefs();
   applyPrefs(prefs);
   audio.setPrefs(prefs.audio);
@@ -77,6 +77,7 @@ export function setupSettings({ audio, onReplayOpening }) {
     close(false);
     onReplayOpening();
   });
+  $('#set-share').addEventListener('click', () => onShare());
 
   function open() {
     sync();
