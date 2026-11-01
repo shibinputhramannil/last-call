@@ -143,6 +143,7 @@ const activation = { isActive: false };
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { userActivation: activation } });
 
 const { AudioEngine } = await import('../public/js/audio.js');
+const { MOODS } = await import('../public/js/music.js');
 
 const PREFS = { master: 0.7, music: 0.5, sfx: 0.8, muted: false };
 const engines = [];
@@ -335,8 +336,8 @@ test('music starts in the mood the game is already in, and plays nothing while p
   audio.setMood('game');
   tap();
   await settle();
-  assert.equal(audio.padFilter.frequency.value, 520);
-  assert.equal(audio.padGain.gain.last.value, 0.055);
+  assert.equal(audio.score.mood, 'game');
+  assert.equal(audio.score.padFilter.frequency.value, MOODS.game.cutoff);
 
   const ctx = FakeAudioContext.instances[0];
   ctx.setState('suspended');
@@ -346,26 +347,29 @@ test('music starts in the mood the game is already in, and plays nothing while p
   assert.equal(ctx.nodes.length, count, 'nothing is queued up to burst out later');
 });
 
-test('music events are scheduled ahead of time, so a busy page never makes them late', async () => {
+test('music is scheduled ahead of the clock, and after a stall it skips ahead instead of bunching up', async () => {
   const audio = await started();
   const ctx = FakeAudioContext.instances[0];
-  ctx.currentTime = 5;
-  audio.next.bell = 0;
+  ctx.currentTime = 5; // the page stalled past the second bar
+  audio.tick();
+  ctx.currentTime = 7;
   const before = ctx.started.length;
   audio.tick();
-  const bell = ctx.started.slice(before);
-  assert.ok(bell.length > 0);
-  assert.ok(bell.every((s) => s.startedAt >= 5.05), 'starts after the lookahead, not at "now"');
+  const fresh = ctx.started.slice(before);
+  assert.ok(fresh.length > 0, 'the next bar was scheduled');
+  assert.ok(fresh.every((s) => s.startedAt >= 7), 'nothing scheduled in the past, so no burst of missed notes');
 });
 
-test('the countdown keeps the music automation small: ten minutes of clock ticks add a handful of events', async () => {
+test('the countdown adds no automation churn: ten minutes of clock ticks change no sound parameter', async () => {
   const audio = await started();
   audio.setMood('game');
-  const before = audio.padFilter.frequency.events.length;
+  const ctx = FakeAudioContext.instances[0];
+  const events = () => ctx.nodes.reduce((n, node) => n + Object.values(node).filter((p) => p instanceof FakeParam).reduce((m, p) => m + p.events.length, 0), 0);
+  const before = events();
   for (let i = 0; i <= 2_400; i++) audio.setIntensity(i / 2_400);
-  const added = audio.padFilter.frequency.events.length - before;
-  assert.ok(added <= 21, `${added} events`);
-  assert.equal(audio.intensity, 1, 'the heartbeat still follows the exact value');
+  assert.equal(events() - before, 0, 'the score reads the intensity bar by bar');
+  assert.equal(audio.intensity, 1);
+  assert.equal(audio.score.intensity, 1);
 });
 
 test('replaying a ring replaces the last one, and leaving a room silences every effect', async () => {
@@ -382,12 +386,13 @@ test('replaying a ring replaces the last one, and leaving a room silences every 
 
   audio.play('ring');
   const scene = audio.channels.get('scene');
-  const pad = audio.padGain.gain.events.length;
+  const music = audio.score.main.gain.events.length;
   audio.stopEffects();
   assert.equal(audio.channels.size, 0);
   assert.equal(scene.out.gain.last.value, 0);
   assert.equal(second.out.gain.last.value, 0);
-  assert.equal(audio.padGain.gain.events.length, pad, 'music carries on');
+  assert.equal(audio.score.main.gain.events.length, music, 'music carries on');
+  assert.equal(audio.score.main.disconnected, false);
 
   audio.play('click');
   assert.ok(audio.channels.get('scene'), 'effects play again afterwards');

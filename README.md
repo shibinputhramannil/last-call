@@ -55,7 +55,7 @@ For development, `npm run dev` restarts the server when server files change. The
 
 ## How to play
 
-1. On your first visit a short story sets the scene, one page at a time. Use **Next** and **Back**, or **Skip the story**. It won't show again; replay it any time from **Settings**.
+1. Each visit opens with a short story that sets the scene, one page at a time. Use **Next** and **Back**, or **Skip the story** (top right, or press Escape). Reloading the page, reconnecting or coming back to a room you're in goes straight to your game instead. You can replay the story any time from **Settings**.
 2. One player chooses **Open a room**, picks a role, and sends the invite link (or reads out the room code). The other player opens the link, or types the code under **Join a friend**.
 3. Pick a stage on the **stage map**. Either player can start it once both of you are on the line. You can swap roles between stages.
 
@@ -495,6 +495,7 @@ public/             Browser client (plain HTML, CSS and ES modules, no build ste
   js/heartbeat-worker.js  Heartbeat ticks that keep going in background tabs
   js/chat.js        Chat panel: receipts, automatic re-sends, queued and saved messages
   js/story.js       The opening story
+  js/music.js       The original background score, composed as it plays
   js/map.js         The stage map
   js/result.js      Stage results, scores and stars
   js/caller.js      The Caller's machines

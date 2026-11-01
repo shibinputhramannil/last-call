@@ -177,7 +177,7 @@ async function seatedPage(token, role) {
   await page.goto(`${base}/robots.txt`);
   await page.eval(
     (c, seat) => {
-      localStorage.setItem('lastcall:opening-seen', 'true');
+      // A saved seat takes the page straight into the room, past the opening story.
       localStorage.setItem('lastcall:seats', JSON.stringify({ [c]: { ...seat, savedAt: Date.now() } }));
     },
     code,

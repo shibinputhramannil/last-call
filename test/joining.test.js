@@ -74,6 +74,24 @@ test('a store that refuses writes (full) still returns what was just saved', () 
   assert.equal(store.getSeat('KQMXRT').token, 'seat-token-2');
 });
 
+test('the opening story plays on a fresh visit, and not on a reload, reconnection or return to the room', () => {
+  // A new tab: a fresh visit.
+  assert.equal(store.startVisit(), true);
+  // A reload or reconnection keeps the tab's session storage, so it is the same visit.
+  assert.equal(store.startVisit(), false);
+  assert.equal(store.startVisit(), false);
+  // Closing the tab (session storage gone) and coming back is a fresh visit again,
+  // whatever an older build left in local storage.
+  site.session = fakeStorage();
+  site.local.setItem('lastcall:opening-seen', 'true');
+  assert.equal(store.startVisit(), true);
+  assert.equal(site.local.getItem('lastcall:opening-seen'), null, 'the old "seen it" flag is cleared');
+  // With site data blocked, it still counts once per page.
+  site.blocked = true;
+  assert.equal(store.startVisit(), true);
+  assert.equal(store.startVisit(), false);
+});
+
 test('a join attempt keeps one id, across reloads of the tab, until its seat is saved', () => {
   const id = store.joinAttemptId('ABCDEF');
   assert.match(id, /^[A-Za-z0-9_-]{16,64}$/);

@@ -1,4 +1,5 @@
 // Procedural sound: no audio files, nothing plays until the player interacts.
+// The music is the original score in music.js; the effects are made here.
 //
 // Browsers let sound start only inside a user gesture, and can stop it again at
 // any time: a background tab, a phone call, another app taking the speaker. So
@@ -6,31 +7,14 @@
 // whenever it is allowed to. No sound problem ever reaches the game: every
 // public method can be called at any time and never throws.
 
+import { MOODS, Score } from './music.js';
+
 const midi = (n) => 440 * 2 ** ((n - 69) / 12);
-
-// A dark, slowly turning progression (A minor, F, D minor, E).
-const CHORDS = [
-  [45, 48, 52],
-  [41, 45, 48],
-  [38, 41, 45],
-  [40, 44, 47],
-];
-const WON_CHORD = [45, 49, 52];
-const BELL_NOTES = [69, 72, 74, 76, 79, 81];
-
-const MOODS = {
-  menu: { filter: 380, pad: 0.05, bells: [7, 14], clanks: [22, 45] },
-  lobby: { filter: 420, pad: 0.05, bells: [6, 12], clanks: [20, 40] },
-  result: { filter: 760, pad: 0.05, bells: [3, 7], clanks: [60, 90] },
-  game: { filter: 520, pad: 0.055, bells: [5, 11], clanks: [14, 30] },
-  won: { filter: 900, pad: 0.06, bells: [2.5, 5], clanks: [999, 999] },
-  lost: { filter: 240, pad: 0.04, bells: [12, 20], clanks: [8, 16] },
-};
 
 /** Events that let sound start. A touch only counts when the finger lifts, so pointerdown counts for a mouse alone. */
 const GESTURES = ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown'];
-/** Music events are scheduled this far ahead, so a busy page never makes them late. */
-const LOOKAHEAD = 0.1;
+/** The score is scheduled this far ahead of the audio clock, so a busy page never makes it late. */
+const SCHEDULE_AHEAD = 1.5;
 /** Time constant of the fade when the tab is hidden or shown, so sound never stops with a click. */
 const FADE = 0.015;
 /** The browser stopping sound by itself is retried at most this often without a gesture. */
@@ -47,7 +31,6 @@ export class AudioEngine {
     this.attached = false;
     this.mood = 'menu';
     this.intensity = 0;
-    this.filterIntensity = 0;
     this.listeners = new Set();
     this.channels = new Map(); // name -> { out, verb }
     this.fx = null; // the channel the effect being built plays on
@@ -137,7 +120,12 @@ export class AudioEngine {
       this.musicBus = ctx.createGain();
       this.sfxBus = ctx.createGain();
       this.musicBus.connect(this.master);
-      this.sfxBus.connect(this.master);
+      // Effects pass a gentle top-end roll-off, so no click or ring turns piercing.
+      const soften = ctx.createBiquadFilter();
+      soften.type = 'lowpass';
+      soften.frequency.value = 6000;
+      soften.Q.value = 0.5;
+      this.sfxBus.connect(soften).connect(this.master);
 
       const impulse = this.impulse(3.4, 2.6);
       this.musicVerb = ctx.createConvolver();
@@ -276,13 +264,19 @@ export class AudioEngine {
 
   // ---- Building blocks ----------------------------------------------------
 
+  /** A room's echo: decaying noise whose highs die away first, so the reverb is warm rather than hissy. */
   impulse(seconds, decay) {
     const rate = this.ctx.sampleRate;
     const length = Math.floor(rate * seconds);
     const buffer = this.ctx.createBuffer(2, length, rate);
     for (let ch = 0; ch < 2; ch++) {
       const data = buffer.getChannelData(ch);
-      for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / length) ** decay;
+      let y = 0;
+      for (let i = 0; i < length; i++) {
+        const k = 0.5 * (1 - i / length) + 0.04; // a one-pole low-pass that closes over the tail
+        y += k * (Math.random() * 2 - 1 - y);
+        data[i] = 2.2 * y * (1 - i / length) ** decay;
+      }
     }
     return buffer;
   }
@@ -314,8 +308,8 @@ export class AudioEngine {
     osc.stop(t + dur + 0.05);
   }
 
-  /** Filtered noise burst. */
-  burst({ at = 0, dur = 0.05, gain = 0.1, type = 'bandpass', freq = 2000, q = 1, bus = 'sfx', verb = 0, sweepTo = null }) {
+  /** Filtered noise burst. It ramps in over `attack`, never starting at full level (that clicks). */
+  burst({ at = 0, dur = 0.05, gain = 0.1, type = 'bandpass', freq = 2000, q = 1, bus = 'sfx', verb = 0, sweepTo = null, attack = 0.004 }) {
     const ctx = this.ctx;
     const t = ctx.currentTime + at;
     const src = ctx.createBufferSource();
@@ -326,7 +320,8 @@ export class AudioEngine {
     if (sweepTo) filter.frequency.exponentialRampToValueAtTime(sweepTo, t + dur);
     filter.Q.value = q;
     const env = ctx.createGain();
-    env.gain.setValueAtTime(gain, t);
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.exponentialRampToValueAtTime(gain, t + attack);
     env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     src.connect(filter).connect(env);
     this.route(env, bus, verb);
@@ -343,7 +338,7 @@ export class AudioEngine {
     const modGain = ctx.createGain();
     carrier.frequency.value = freq;
     mod.frequency.value = freq * 2.76;
-    modGain.gain.setValueAtTime(freq * 1.6, t);
+    modGain.gain.setValueAtTime(freq * 1.1, t); // a gentle strike: fewer bright overtones
     modGain.gain.exponentialRampToValueAtTime(1, t + dur);
     mod.connect(modGain).connect(carrier.frequency);
     const env = ctx.createGain();
@@ -412,76 +407,11 @@ export class AudioEngine {
   // ---- Music ----------------------------------------------------------------
 
   startMusic() {
-    const ctx = this.ctx;
-    const t = ctx.currentTime;
-    // Start in whatever mood the game is already in: the first gesture may come mid-stage.
-    const mood = MOODS[this.mood];
-
-    this.padFilter = ctx.createBiquadFilter();
-    this.padFilter.type = 'lowpass';
-    this.padFilter.frequency.value = mood.filter + (this.mood === 'game' ? 500 * this.filterIntensity : 0);
-    this.padFilter.Q.value = 2;
-    this.padGain = ctx.createGain();
-    this.padGain.gain.setValueAtTime(0.0001, t);
-    this.padGain.gain.setTargetAtTime(mood.pad, t, 1.2);
-    this.padFilter.connect(this.padGain);
-    this.route(this.padGain, 'music', 0.7);
-
-    const lfo = ctx.createOscillator();
-    const lfoGain = ctx.createGain();
-    lfo.frequency.value = 0.05;
-    lfoGain.gain.value = 160;
-    lfo.connect(lfoGain).connect(this.padFilter.frequency);
-    lfo.start();
-
-    this.voices = CHORDS[0].map((note) => {
-      const pair = [-7, 7].map((cents) => {
-        const osc = ctx.createOscillator();
-        osc.type = 'sawtooth';
-        osc.frequency.value = midi(note);
-        osc.detune.value = cents;
-        osc.connect(this.padFilter);
-        osc.start();
-        return osc;
-      });
-      return pair;
-    });
-
-    // Low drone with a slow, uneasy tremolo.
-    const sub = ctx.createOscillator();
-    sub.frequency.value = midi(33);
-    const subGain = ctx.createGain();
-    subGain.gain.value = 0.07;
-    const trem = ctx.createOscillator();
-    const tremGain = ctx.createGain();
-    trem.frequency.value = 0.17;
-    tremGain.gain.value = 0.03;
-    trem.connect(tremGain).connect(subGain.gain);
-    sub.connect(subGain);
-    this.route(subGain, 'music', 0);
-    sub.start();
-    trem.start();
-
-    // Line hiss.
-    const hiss = ctx.createBufferSource();
-    hiss.buffer = this.noise;
-    hiss.loop = true;
-    const hp = ctx.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = 3500;
-    const hissGain = ctx.createGain();
-    hissGain.gain.value = 0.012;
-    hiss.connect(hp).connect(hissGain);
-    this.route(hissGain, 'music', 0);
-    hiss.start();
-
-    this.chordIndex = 0;
-    if (this.mood === 'won') this.setChord(WON_CHORD, 3);
-    if (this.mood === 'lost') this.setChord(CHORDS[2].map((n) => n - 1), 4);
-    const now = ctx.currentTime;
-    this.next = { chord: now + 14, bell: now + 3, clank: now + 9, crackle: now + 1, beat: now + 1 };
+    this.score = new Score(this.ctx, { out: this.musicBus, verb: this.musicVerb, noise: this.noise, mood: this.mood, intensity: this.intensity });
+    this.score.start(this.ctx.currentTime + 0.05);
+    this.scheduleMusic(this.ctx.currentTime);
     clearInterval(this.scheduler);
-    this.scheduler = setInterval(() => this.tick(), 200);
+    this.scheduler = setInterval(() => this.tick(), 250);
   }
 
   tick() {
@@ -490,75 +420,26 @@ export class AudioEngine {
     try {
       this.scheduleMusic(ctx.currentTime);
     } catch {
-      // Skip this beat; the next tick tries again.
+      // Skip this round; the next tick tries again.
     }
   }
 
+  /** Keeps the score scheduled a little ahead of the audio clock. */
   scheduleMusic(now) {
-    const mood = MOODS[this.mood];
-    const rand = ([lo, hi]) => lo + Math.random() * (hi - lo);
-    const at = LOOKAHEAD;
-
-    if (now >= this.next.chord && this.mood !== 'won') {
-      this.chordIndex = (this.chordIndex + 1) % CHORDS.length;
-      this.setChord(CHORDS[this.chordIndex], 2.5);
-      this.next.chord = now + 12 + Math.random() * 6;
-    }
-    if (now >= this.next.bell) {
-      const note = BELL_NOTES[Math.floor(Math.random() * BELL_NOTES.length)] - (this.mood === 'lost' ? 12 : 0);
-      this.bell({ freq: midi(note), gain: 0.028 + Math.random() * 0.02, at });
-      this.next.bell = now + rand(mood.bells);
-    }
-    if (now >= this.next.clank) {
-      // Something heavy shifts somewhere in the building.
-      this.burst({ bus: 'music', dur: 0.5, gain: 0.08, freq: 300 + Math.random() * 500, q: 9, verb: 1.2, at });
-      this.tone({ bus: 'music', freq: 140 + Math.random() * 60, type: 'triangle', dur: 1.4, gain: 0.03, verb: 1, at });
-      this.next.clank = now + rand(mood.clanks);
-    }
-    if (now >= this.next.crackle) {
-      this.burst({ bus: 'music', dur: 0.012, gain: 0.04 + Math.random() * 0.05, type: 'highpass', freq: 2500, at });
-      this.next.crackle = now + 0.3 + Math.random() * 2.5;
-    }
-    if (this.intensity > 0.05 && now >= this.next.beat) {
-      // A heartbeat that quickens as the clock runs down.
-      const g = 0.05 + 0.12 * this.intensity;
-      this.tone({ bus: 'music', freq: 62, glideTo: 40, dur: 0.18, gain: g, at });
-      this.tone({ bus: 'music', freq: 58, glideTo: 38, dur: 0.16, gain: g * 0.7, at: at + 0.22 });
-      this.next.beat = now + 1.2 - 0.5 * this.intensity;
-    }
-  }
-
-  setChord(notes, glide) {
-    const t = this.ctx.currentTime;
-    this.voices.forEach((pair, i) => {
-      for (const osc of pair) osc.frequency.setTargetAtTime(midi(notes[i % notes.length]), t, glide / 3);
-    });
+    this.score?.scheduleUntil(now + SCHEDULE_AHEAD);
   }
 
   setMood(mood) {
     if (!MOODS[mood] || mood === this.mood) return;
     this.mood = mood;
     if (mood !== 'game') this.setIntensity(0);
-    this.guard(() => {
-      const t = this.ctx.currentTime;
-      const m = MOODS[mood];
-      this.padFilter.frequency.setTargetAtTime(m.filter + (mood === 'game' ? 500 * this.filterIntensity : 0), t, 1.5);
-      this.padGain.gain.setTargetAtTime(m.pad, t, 1.5);
-      if (mood === 'won') this.setChord(WON_CHORD, 3);
-      if (mood === 'lost') this.setChord(CHORDS[2].map((n) => n - 1), 4);
-      this.next.bell = t + 1.5;
-    });
+    this.guard(() => this.score.setMood(mood, this.ctx.currentTime));
   }
 
+  /** 0..1, how close a countdown is to running out. The score reads it bar by bar. */
   setIntensity(value) {
     this.intensity = Math.max(0, Math.min(1, Number(value) || 0));
-    // The stage clock calls this four times a second; move the filter only in
-    // twentieths, so its automation stays a handful of events per stage.
-    const stepped = Math.round(this.intensity * 20) / 20;
-    if (stepped === this.filterIntensity) return;
-    this.filterIntensity = stepped;
-    if (this.mood !== 'game') return;
-    this.guard(() => this.padFilter.frequency.setTargetAtTime(MOODS.game.filter + 500 * stepped, this.ctx.currentTime, 2));
+    this.score?.setIntensity(this.intensity);
   }
 
   // ---- Effects --------------------------------------------------------------
@@ -583,20 +464,21 @@ export class AudioEngine {
   effect(name, opt) {
     switch (name) {
       case 'click':
-        this.tone({ freq: 1700, type: 'square', dur: 0.03, gain: 0.025 });
+        // A soft tick.
+        this.tone({ freq: 1400, type: 'triangle', dur: 0.04, gain: 0.065 });
         break;
       case 'pickup':
-        this.burst({ dur: 0.06, gain: 0.25, freq: 1800, q: 2 });
-        this.tone({ freq: 140, glideTo: 70, dur: 0.12, gain: 0.12, type: 'triangle' });
-        // UK-style dial tone: 350 Hz + 440 Hz.
-        this.tone({ freq: 350, dur: 1.6, gain: 0.05, at: 0.25, attack: 0.03 });
-        this.tone({ freq: 440, dur: 1.6, gain: 0.05, at: 0.25, attack: 0.03 });
+        this.burst({ dur: 0.07, gain: 0.12, type: 'lowpass', freq: 1300 });
+        this.tone({ freq: 140, glideTo: 70, dur: 0.14, gain: 0.1, type: 'triangle' });
+        // UK-style dial tone: 350 Hz + 440 Hz, soft and brief.
+        this.tone({ freq: 350, dur: 1.4, gain: 0.035, at: 0.25, attack: 0.05 });
+        this.tone({ freq: 440, dur: 1.4, gain: 0.035, at: 0.25, attack: 0.05 });
         break;
       case 'ring':
         for (const at of [0, 0.6]) {
           for (let i = 0; i < 8; i++) {
-            this.tone({ freq: 400, dur: 0.045, gain: 0.05, at: at + i * 0.05 });
-            this.tone({ freq: 450, dur: 0.045, gain: 0.05, at: at + i * 0.05 });
+            this.tone({ freq: 400, dur: 0.045, gain: 0.09, at: at + i * 0.05, attack: 0.006 });
+            this.tone({ freq: 450, dur: 0.045, gain: 0.09, at: at + i * 0.05, attack: 0.006 });
           }
         }
         break;
@@ -604,89 +486,90 @@ export class AudioEngine {
         // Rotary dialling sends one click per unit; 0 sends ten.
         const count = opt.digit === 0 ? 10 : opt.digit;
         for (let i = 0; i < count; i++) {
-          this.burst({ at: 0.12 + i * 0.07, dur: 0.018, gain: 0.22, freq: 2600, q: 3 });
-          this.tone({ at: 0.12 + i * 0.07, freq: 190, dur: 0.03, gain: 0.05, type: 'triangle' });
+          this.burst({ at: 0.12 + i * 0.07, dur: 0.02, gain: 0.22, freq: 1500, q: 2, attack: 0.003 });
+          this.tone({ at: 0.12 + i * 0.07, freq: 170, dur: 0.035, gain: 0.08, type: 'triangle' });
         }
         break;
       }
       case 'relay':
-        this.tone({ freq: 130, glideTo: 45, dur: 0.2, gain: 0.2, type: 'triangle' });
-        this.burst({ dur: 0.09, gain: 0.25, type: 'lowpass', freq: 700 });
+        this.tone({ freq: 130, glideTo: 50, dur: 0.2, gain: 0.12, type: 'triangle' });
+        this.burst({ dur: 0.09, gain: 0.1, type: 'lowpass', freq: 650 });
         break;
       case 'plug':
-        this.burst({ dur: 0.03, gain: 0.3, freq: 3000, q: 4 });
-        this.tone({ freq: 2100, dur: 0.18, gain: 0.03, at: 0.01, verb: 0.3 });
-        this.tone({ freq: 120, glideTo: 60, dur: 0.1, gain: 0.12, type: 'triangle' });
+        this.burst({ dur: 0.035, gain: 0.12, freq: 1700, q: 2, attack: 0.002 });
+        this.tone({ freq: 1600, dur: 0.2, gain: 0.018, at: 0.01, verb: 0.3 });
+        this.tone({ freq: 120, glideTo: 60, dur: 0.1, gain: 0.1, type: 'triangle' });
         break;
       case 'unplug':
-        this.burst({ dur: 0.05, gain: 0.2, freq: 1500, sweepTo: 4000, q: 3 });
+        this.burst({ dur: 0.06, gain: 0.32, freq: 900, sweepTo: 1700, q: 2.5 });
         break;
       case 'key':
-        this.burst({ dur: 0.025, gain: 0.2, freq: 3200, q: 2 });
-        this.tone({ freq: 90, dur: 0.05, gain: 0.08, type: 'triangle' });
+        this.burst({ dur: 0.03, gain: 0.13, freq: 1900, q: 1.5, attack: 0.002 });
+        this.tone({ freq: 110, dur: 0.06, gain: 0.09, type: 'triangle' });
         break;
       case 'success':
-        [69, 73, 76, 81].forEach((n, i) => this.bell({ freq: midi(n), at: i * 0.13, gain: 0.07, dur: 2.5, bus: 'sfx', verb: 0.6 }));
+        [69, 73, 76, 81].forEach((n, i) => this.bell({ freq: midi(n), at: i * 0.13, gain: 0.06, dur: 2.4, bus: 'sfx', verb: 0.5 }));
         break;
       case 'fail':
-        // "Number unobtainable": a flat, beating buzz.
-        this.tone({ freq: 98, type: 'sawtooth', dur: 0.75, gain: 0.07, attack: 0.02 });
-        this.tone({ freq: 104, type: 'sawtooth', dur: 0.75, gain: 0.07, attack: 0.02 });
+        // "Number unobtainable": a low, beating tone. Unmistakable, never harsh.
+        this.tone({ freq: 147, type: 'triangle', dur: 0.6, gain: 0.095, attack: 0.02 });
+        this.tone({ freq: 156, type: 'triangle', dur: 0.6, gain: 0.095, attack: 0.02 });
         break;
       case 'incoming':
-        this.tone({ freq: 880, dur: 0.09, gain: 0.04 });
-        this.tone({ freq: 1320, dur: 0.12, gain: 0.035, at: 0.08 });
+        this.tone({ freq: 784, dur: 0.1, gain: 0.08 });
+        this.tone({ freq: 1175, dur: 0.14, gain: 0.06, at: 0.08 });
         break;
       case 'sent':
-        this.tone({ freq: 1200, dur: 0.05, gain: 0.02 });
+        this.tone({ freq: 988, dur: 0.06, gain: 0.055 });
         break;
       case 'hint':
-        this.burst({ dur: 0.35, gain: 0.07, freq: 700, sweepTo: 3200, q: 0.8 });
+        this.burst({ dur: 0.35, gain: 0.2, freq: 380, sweepTo: 1100, q: 1.2, attack: 0.03 });
         break;
       case 'join':
-        this.tone({ freq: 523, dur: 0.25, gain: 0.04 });
-        this.tone({ freq: 784, dur: 0.35, gain: 0.04, at: 0.12 });
+        this.tone({ freq: 523, dur: 0.25, gain: 0.075 });
+        this.tone({ freq: 784, dur: 0.35, gain: 0.065, at: 0.12 });
         break;
       case 'drop':
-        this.tone({ freq: 523, dur: 0.25, gain: 0.04 });
-        this.tone({ freq: 349, dur: 0.4, gain: 0.04, at: 0.15 });
+        this.tone({ freq: 523, dur: 0.25, gain: 0.075 });
+        this.tone({ freq: 349, dur: 0.4, gain: 0.075, at: 0.15 });
         break;
       case 'cadence': {
         // A party-line ring: long and short bursts of the 400/450 Hz ringing tone.
         let at = 0;
         for (const part of opt.pattern || '') {
           const dur = part === 'L' ? 0.55 : 0.2;
-          this.tone({ freq: 400, dur, gain: 0.045, at, attack: 0.01 });
-          this.tone({ freq: 450, dur, gain: 0.045, at, attack: 0.01 });
+          this.tone({ freq: 400, dur, gain: 0.065, at, attack: 0.015 });
+          this.tone({ freq: 450, dur, gain: 0.065, at, attack: 0.015 });
           at += dur + 0.18;
         }
         break;
       }
       case 'toggle':
-        this.burst({ dur: 0.04, gain: 0.22, type: 'lowpass', freq: 1200 });
-        this.tone({ freq: opt.up ? 180 : 120, glideTo: opt.up ? 220 : 90, dur: 0.08, gain: 0.08, type: 'triangle' });
+        this.burst({ dur: 0.04, gain: 0.12, type: 'lowpass', freq: 1100 });
+        this.tone({ freq: opt.up ? 180 : 120, glideTo: opt.up ? 220 : 90, dur: 0.08, gain: 0.07, type: 'triangle' });
         break;
       case 'page':
-        this.burst({ dur: 0.12, gain: 0.05, freq: 2400, sweepTo: 900, q: 0.7 });
+        this.burst({ dur: 0.14, gain: 0.12, freq: 850, sweepTo: 420, q: 1.1, attack: 0.01 });
         break;
       case 'star': {
-        const notes = [76, 79, 83];
+        const notes = [72, 76, 79];
         this.bell({ freq: midi(notes[Math.min(2, opt.index || 0)]), gain: 0.08, dur: 2.2, bus: 'sfx', verb: 0.5 });
         break;
       }
       case 'stage':
-        [64, 69, 73, 76].forEach((n, i) => this.bell({ freq: midi(n), at: i * 0.11, gain: 0.06, dur: 2.4, bus: 'sfx', verb: 0.6 }));
-        [45, 52, 57].forEach((n) => this.tone({ freq: midi(n), type: 'triangle', dur: 2.6, gain: 0.035, attack: 0.4, at: 0.3, verb: 0.8 }));
+        [64, 69, 73, 76].forEach((n, i) => this.bell({ freq: midi(n), at: i * 0.11, gain: 0.05, dur: 2.4, bus: 'sfx', verb: 0.6 }));
+        [45, 52, 57].forEach((n) => this.tone({ freq: midi(n), type: 'triangle', dur: 2.6, gain: 0.03, attack: 0.4, at: 0.3, verb: 0.8 }));
         break;
       case 'win':
         this.effect('success', opt);
-        [57, 61, 64].forEach((n) => this.tone({ freq: midi(n), type: 'triangle', dur: 4, gain: 0.04, attack: 0.8, at: 0.5, verb: 0.8 }));
+        [57, 61, 64].forEach((n) => this.tone({ freq: midi(n), type: 'triangle', dur: 4, gain: 0.035, attack: 0.8, at: 0.5, verb: 0.8 }));
         break;
       case 'lose':
-        [64, 60, 57, 52].forEach((n, i) => this.tone({ freq: midi(n), type: 'triangle', dur: 1.2, gain: 0.05, at: i * 0.35, verb: 0.8 }));
+        [64, 60, 57, 52].forEach((n, i) => this.tone({ freq: midi(n), type: 'triangle', dur: 1.2, gain: 0.065, at: i * 0.35, verb: 0.8 }));
         break;
       default:
         break;
     }
   }
+
 }

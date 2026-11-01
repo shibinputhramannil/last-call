@@ -7,7 +7,9 @@ const SEATS_KEY = 'lastcall:seats';
 const PREFS_KEY = 'lastcall:prefs';
 const LEGACY_AUDIO_KEY = 'lastcall:audio';
 const PROGRESS_KEY = 'lastcall:progress';
-const OPENING_KEY = 'lastcall:opening-seen';
+const VISIT_KEY = 'lastcall:visit';
+/** The flag the opening story used to keep for good; cleared, since the story now plays once per visit. */
+const OLD_OPENING_KEY = 'lastcall:opening-seen';
 const SEAT_TTL_MS = 8 * 3_600_000;
 const RANDOM_ID = /^[A-Za-z0-9_-]{16,64}$/;
 
@@ -115,7 +117,7 @@ export function joinAttemptId(code) {
 }
 
 export const DEFAULT_PREFS = Object.freeze({
-  audio: { master: 0.7, music: 0.5, sfx: 0.8, muted: false },
+  audio: { master: 0.6, music: 0.4, sfx: 0.7, muted: false },
   motion: 'system',
   textSize: 'standard',
   contrast: 'standard',
@@ -170,8 +172,17 @@ export function browserSessionId() {
   }
 }
 
-export const openingSeen = () => read('localStorage', OPENING_KEY, false) === true;
-export const markOpeningSeen = () => write('localStorage', OPENING_KEY, true);
+/**
+ * True once per visit: the first time a tab loads Last Call. A reload, a
+ * reconnection or a return to the room keeps the tab's sessionStorage, so the
+ * opening story (which plays on a fresh visit) never interrupts a game.
+ */
+export function startVisit() {
+  const fresh = read('sessionStorage', VISIT_KEY, null) !== true;
+  write('sessionStorage', VISIT_KEY, true);
+  write('localStorage', OLD_OPENING_KEY, null);
+  return fresh;
+}
 
 /** Chat messages not yet confirmed by the server, kept across a reload of this tab. */
 export function loadPending(code) {

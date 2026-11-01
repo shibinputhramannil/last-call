@@ -17,11 +17,10 @@ import {
   joinAttemptId,
   loadPrefs,
   loadProgress,
-  markOpeningSeen,
-  openingSeen,
   saveProgress,
   saveSeat,
   saveTicket,
+  startVisit,
 } from './store.js';
 
 const ROLE_LABEL = { caller: 'Caller', operator: 'Operator' };
@@ -166,13 +165,7 @@ document.addEventListener('keydown', (e) => {
 
 function startOpening(then) {
   showScreen('story');
-  runOpening({
-    audio,
-    onDone: () => {
-      markOpeningSeen();
-      then();
-    },
-  });
+  runOpening({ audio, onDone: then });
 }
 
 /** After a replay from Settings: back to wherever the player was. */
@@ -1118,6 +1111,7 @@ function boot() {
   // Browsers only allow sound after a gesture; nothing plays before the first one.
   audio.attach();
 
+  const fresh = startVisit();
   const raw = new URLSearchParams(location.search).get('room');
   const code = raw ? normalizeRoomCode(raw) : null;
   const valid = code && !roomCodeProblem(code);
@@ -1128,10 +1122,11 @@ function boot() {
         ? showMenu({ joinCode: code })
         : showMenu({ banner: `That invite link is broken: ${roomCodeProblem(code)} Ask your friend for the code.` })
       : showMenu();
-  // Back in a room (reload, or returning from another app): straight in.
+  // Back in a room (a reload, or returning from another app): straight in, never the story.
   if (seat) enterRoom(code, seat.token);
-  else if (openingSeen()) toMenu();
-  else startOpening(toMenu);
+  // A fresh visit opens with the story (Skip is always there); a reload goes straight on.
+  else if (fresh) startOpening(toMenu);
+  else toMenu();
   // Tells boot.js the game started, so it never replaces this screen with a loading error.
   document.documentElement.dataset.booted = 'true';
 }
